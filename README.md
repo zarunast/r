@@ -1,11 +1,15 @@
 # АИС приёмной комиссии БГТУ
 
 Рабочий backend на Python 3.11+ / FastAPI / SQLAlchemy 2 / SQLite по приложенному ТЗ.
-Два сайта могут использовать один REST API: служебные методы требуют JWT,
+Два сайта используют один REST API: служебные методы требуют JWT,
 `/public/*` возвращают только обезличенные данные. Внутренний сайт на React 18 + TypeScript
 включён в `frontend/`: дашборд, реестр, рейтинги, договоры, звонки, отчёты и журнал действий.
+Публичный портал абитуриента доступен на `/abiturient/`: поиск ЕПГУ, каталог,
+обезличенные рейтинги, объяснение текущего положения и чат-помощник без входа.
 
 [Инструкция по сайту](FRONTEND.md) · [Дашборд](artifacts/dashboard-desktop.png) · [Мобильный вид](artifacts/dashboard-mobile.png)
+
+[Портал абитуриента](PUBLIC.md) · [Его дизайн](artifacts/applicant-home.png) · [Поиск и оценка](artifacts/applicant-search.png)
 
 ## Запуск
 
@@ -152,11 +156,16 @@ SQLite сам по себе не шифрует персональные дан�
 По умолчанию служебные методы доступны только с loopback и требуют JWT. Для прямого
 доступа из локальной сети укажите `INTERNAL_NETWORKS`, например `10.20.0.0/16,127.0.0.0/8`.
 При размещении за Nginx обязательно ограничьте служебные пути сетью вуза **на Nginx**:
-backend увидит адрес самого прокси. Публично разрешайте только `/public/`; не публикуйте
-целиком upstream. Пример фрагмента (замените подсеть реальной):
+backend увидит адрес самого прокси. Для открытого портала разрешайте только `/public/`,
+страницу `/abiturient/`, `/assets/` и favicon; не публикуйте целиком upstream.
+Пример фрагмента (замените подсеть реальной):
 
 ```nginx
 client_max_body_size 25m;
+location = /abiturient { return 301 /abiturient/; }
+location = /abiturient/ { proxy_pass http://127.0.0.1:8000; }
+location /assets/ { proxy_pass http://127.0.0.1:8000; }
+location = /favicon.svg { proxy_pass http://127.0.0.1:8000; }
 location /public/ {
     limit_req zone=public_api burst=20 nodelay;
     proxy_pass http://127.0.0.1:8000;
@@ -170,7 +179,7 @@ location / {
 
 `limit_req_zone $binary_remote_addr zone=public_api:10m rate=10r/s;` задайте в блоке
 `http`. Также нужны HTTPS и ограничение частоты `/auth/token`. API не интерпретирует
-ввод как HTML; будущий React-интерфейс должен выводить строки обычным текстом без
+ввод как HTML; React-интерфейсы выводят строки обычным текстом без
 `dangerouslySetInnerHTML`. Экспорт Excel экранирует формулы. Имя, контакты, исходная строка,
 документы и данные договора не попадают в публичные сериализаторы.
 
@@ -221,6 +230,7 @@ API, сохраните текущую БД и её WAL/SHM, проверьте 
 `services.py` — правила конкурса, документы, отчёты, резервные копии;
 `security.py` — учётные записи и JWT; `api.py` — REST и валидация; `__main__.py` — CLI.
 `web.py` — защищённые представления внутреннего сайта; `frontend/` — React-интерфейс.
+`portal.py` — открытый каталог конкурсов; `frontend/src/portal/` — отдельное приложение абитуриента.
 
 Связи: `Applicant 1—N Application`, `Application 1—0..1 Contract`,
 `Contract 1—N ContractEvent`, `Application 1—N Call`. `SeatPlan` относится к полному

@@ -146,3 +146,9 @@ def attach_web(app, db, session, staff):
         @app.get("/favicon.svg", include_in_schema=False)
         def favicon():
             return FileResponse(dist / "favicon.svg")
+
+        if (dist / "abiturient.html").exists():
+            @app.get("/abiturient/", include_in_schema=False)
+            @app.get("/abiturient", include_in_schema=False)
+            def applicant_site():
+                return FileResponse(dist / "abiturient.html")

@@ -141,7 +141,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         yield
         db.engine.dispose()
 
-    app = FastAPI(title="АИС приёмной комиссии БГТУ", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="АИС приёмной комиссии БГТУ", version="0.3.0", lifespan=lifespan)
     app.state.db = db
     oauth = OAuth2PasswordBearer(tokenUrl="/auth/token")
 
@@ -406,4 +406,6 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
 
     from .web import attach_web
     attach_web(app, db, session, staff)
+    from .portal import attach_portal
+    attach_portal(app, session)
     return app

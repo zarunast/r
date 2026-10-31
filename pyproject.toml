@@ -1,6 +1,6 @@
 [project]
 name = "bgtu-admissions-core"
-version = "0.2.0"
+version = "0.3.0"
 description = "Ядро АИС приёмной комиссии БГТУ"
 requires-python = ">=3.11"
 
