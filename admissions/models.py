@@ -100,3 +100,14 @@ class User(Base):
     login: Mapped[str] = mapped_column(unique=True)
     password_hash: Mapped[str]
     active: Mapped[bool] = mapped_column(default=True)
+
+
+class ActivityEvent(Base):
+    __tablename__ = "activity_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+    actor: Mapped[str]
+    action: Mapped[str]
+    object: Mapped[str]
+    detail: Mapped[str] = mapped_column(default="")
+    status: Mapped[str] = mapped_column(default="success")

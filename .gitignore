@@ -6,3 +6,7 @@ __pycache__/
 data/
 backups/
 *.sqlite3*
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+test-results/

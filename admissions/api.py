@@ -64,6 +64,11 @@ class ApplicationPatch(Input):
     achievements: int | None = Field(default=None, ge=0, le=100)
 
 
+class RegistrationData(Input):
+    applicant: ApplicantData
+    application: ApplicationData
+
+
 class PlanData(Group):
     seats: int = Field(ge=0, le=100000)
 
@@ -90,7 +95,10 @@ class EnrollmentData(Input):
 
 
 def model_dict(obj):
-    return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+    result = {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+    # SQLite хранит UTC без суффикса timezone; в JSON возвращаем явный UTC.
+    return {k: v.replace(tzinfo=timezone.utc) if isinstance(v, datetime) and v.tzinfo is None else v
+            for k, v in result.items()}
 
 
 def score_values(exams, achievements):
@@ -133,7 +141,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         yield
         db.engine.dispose()
 
-    app = FastAPI(title="АИС приёмной комиссии БГТУ", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="АИС приёмной комиссии БГТУ", version="0.2.0", lifespan=lifespan)
     app.state.db = db
     oauth = OAuth2PasswordBearer(tokenUrl="/auth/token")
 
@@ -156,9 +164,11 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         response.headers["Cache-Control"] = "no-store"
         return response
 
-    def session():
+    def session(request: Request):
         with db.uow() as s:
             yield s
+            from .web import record_activity
+            record_activity(s, request)
 
     def local_only(request: Request):
         try:
@@ -168,7 +178,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         if not any(address in n for n in networks):
             raise HTTPException(403, "Доступ только из сети приёмной комиссии")
 
-    def staff(token=Depends(oauth), s=Depends(session), _=Depends(local_only)):
+    def staff(request: Request, token=Depends(oauth), s=Depends(session), _=Depends(local_only)):
         try:
             user_id = decode_token(token, secret)
         except ValueError:
@@ -176,6 +186,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         user = s.get(User, user_id)
         if not user or not user.active:
             raise HTTPException(401, "Пользователь недоступен")
+        request.state.actor = user.login
         return user
 
     private = [Depends(staff)]
@@ -246,6 +257,21 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         s.add(app_obj)
         s.flush()
         return model_dict(app_obj)
+
+    @app.post("/registry", dependencies=private, status_code=201)
+    def register(body: RegistrationData, s=Depends(session)):
+        if body.applicant.number != body.application.applicant_number:
+            raise ValueError("Номера абитуриента и заявления должны совпадать")
+        total = score_values(body.application.exam_scores, body.application.achievements)
+        person = Applicant(**body.applicant.model_dump())
+        s.add(person)
+        s.flush()
+        values = body.application.model_dump(exclude={"exam_scores"})
+        values["quota"] = body.application.quota.value
+        obj = Application(**values, exams=body.application.exam_scores, total_score=total)
+        s.add(obj)
+        s.flush()
+        return {"applicant_number": person.number, "application_id": obj.id}
 
     @app.patch("/applications/{application_id}", dependencies=private)
     def edit_application(application_id: int, body: ApplicationPatch, s=Depends(session)):
@@ -378,4 +404,6 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
     def one_c(year: int, format: Literal["json", "xml"] = "json", s=Depends(session)):
         return Response(svc.export_1c(s, year, format), media_type="application/json" if format == "json" else "application/xml")
 
+    from .web import attach_web
+    attach_web(app, db, session, staff)
     return app

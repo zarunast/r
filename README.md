@@ -1,8 +1,11 @@
-# Ядро АИС приёмной комиссии БГТУ
+# АИС приёмной комиссии БГТУ
 
 Рабочий backend на Python 3.11+ / FastAPI / SQLAlchemy 2 / SQLite по приложенному ТЗ.
 Два сайта могут использовать один REST API: служебные методы требуют JWT,
-`/public/*` возвращают только обезличенные данные. Интерфейс React в этот проект не входит.
+`/public/*` возвращают только обезличенные данные. Внутренний сайт на React 18 + TypeScript
+включён в `frontend/`: дашборд, реестр, рейтинги, договоры, звонки, отчёты и журнал действий.
+
+[Инструкция по сайту](FRONTEND.md) · [Дашборд](artifacts/dashboard-desktop.png) · [Мобильный вид](artifacts/dashboard-mobile.png)
 
 ## Запуск
 
@@ -15,6 +18,11 @@ export DATABASE_URL=sqlite:///data/admissions.sqlite3
 export JWT_SECRET="$(.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(48))')"
 .venv/bin/python -m admissions init-db
 .venv/bin/python -m admissions create-user secretary
+# Сборка внутреннего сайта (Node.js 20.19+ или 22.12+):
+cd frontend
+npm ci
+npm run build
+cd ..
 .venv/bin/uvicorn admissions.api:create_app --factory --host 127.0.0.1 --port 8000 --no-proxy-headers
 ```
 
@@ -23,7 +31,9 @@ export JWT_SECRET="$(.venv/bin/python -c 'import secrets; print(secrets.token_ur
 Никаких стандартных учётных записей или секретов в коде нет. `.env` автоматически не
 читается: переменные нужно передать через оболочку, systemd EnvironmentFile или Docker.
 Для отдельной локальной базы можно передать `--database sqlite:///data/demo.sqlite3`
-перед подкомандой CLI.
+перед подкомандой CLI. Сайт открывается на корневом пути `/` этого же сервера.
+Сначала доступен явно обозначенный демо-режим на вымышленных данных; кнопка
+«Подключить рабочую базу» открывает вход с созданной учётной записью.
 
 ## Импорт вашей выгрузки
 
@@ -210,6 +220,7 @@ API, сохраните текущую БД и её WAL/SHM, проверьте 
 `db.py` — Unit of Work; `models.py` — сущности; `importer.py` — Excel и upsert;
 `services.py` — правила конкурса, документы, отчёты, резервные копии;
 `security.py` — учётные записи и JWT; `api.py` — REST и валидация; `__main__.py` — CLI.
+`web.py` — защищённые представления внутреннего сайта; `frontend/` — React-интерфейс.
 
 Связи: `Applicant 1—N Application`, `Application 1—0..1 Contract`,
 `Contract 1—N ContractEvent`, `Application 1—N Call`. `SeatPlan` относится к полному
