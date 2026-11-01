@@ -1,0 +1,29 @@
+digraph Classes {
+ graph [rankdir=TB, bgcolor="white", pad="0.15", nodesep="0.35", ranksep="0.40", splines=polyline];
+ node [shape=record, style=filled, fillcolor="#FFFFFF", color="#334155", fontname="Liberation Sans", fontsize=12, margin="0.10,0.07"];
+ edge [fontname="Liberation Sans", fontsize=10, color="#475569", arrowsize=0.7];
+ Applicant [label="{Applicant|- number: str\l- surname, first_name: str\l- profile: dict\l|+ get_profile(): dict\l+ set_profile(value: dict): None\l}"];
+ SeatPlan [label="{SeatPlan|- year: int\l- direction, quota: str\l- seats: int\l|+ get_seats(): int\l+ set_seats(value: int): None\l}"];
+ Application [label="{Application|- id: int; applicant_number: FK\l- year, campaign, direction\l- quota, total_score, consent\l- status: str\l|+ get_status(): str\l+ set_status(value: str): None\l+ get_total_score(): int\l+ set_total_score(value: int): None\l}"];
+ User [label="{User|- id: int; login: str\l- password_hash: str\l- active: bool\l|+ get_active(): bool\l+ set_active(value: bool): None\l}"];
+ Contract [label="{Contract|- id: int; number: str\l- application_id: FK\l- location, stage: str\l- paid: bool\l|+ get_stage(): str\l+ set_stage(value: str): None\l+ get_paid(): bool\l+ set_paid(value: bool): None\l}"];
+ Call [label="{Call|- application_id: FK\l- result, comment, actor: str\l- at: datetime\l|+ get_result(): str\l}"];
+ ContractEvent [label="{ContractEvent|- contract_id: FK\l- actor: str; at: datetime\l- changes: dict\l|+ get_changes(): dict\l}"];
+ ActivityEvent [label="{ActivityEvent|- actor, action, object: str\l- status: str; at: datetime\l|+ get_status(): str\l}"];
+ Database [label="{Database|- engine: Engine\l- sessions: sessionmaker\l|+ create_schema(): None\l+ uow(): context manager\l}"];
+ {rank=same; Applicant; SeatPlan;}
+ {rank=same; Application; User;}
+ {rank=same; Contract; Call;}
+ {rank=same; ContractEvent; ActivityEvent;}
+ Applicant -> Application [dir=none, label="1       0..*"];
+ SeatPlan -> Application [style=dashed,dir=none,label="ключ конкурса"];
+ Application -> Contract [dir=none,label="1       0..1"];
+ Application -> Call [dir=none,label="1       0..*"];
+ Contract -> ContractEvent [dir=none,label="1       0..*"];
+ User -> ActivityEvent [style=dashed,dir=none,label="actor = login"];
+ User -> Call [style=dashed,dir=none,label="actor = login"];
+ ContractEvent -> Database [style=dotted,label="сохранение"];
+ ActivityEvent -> Database [style=dotted,label="сохранение"];
+ label="Методы get_/set_ — проектные операции доступа; + открытый метод, - атрибут";
+ labelloc=b; fontname="Liberation Sans"; fontsize=11;
+}
