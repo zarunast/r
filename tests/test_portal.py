@@ -19,8 +19,10 @@ def portal(tmp_path):
             for i in range(5):
                 s.add(Application(applicant_number=f"00123456{i+7}", year=2026, direction="ИТ", campaign="бак",
                                   study_form="Очная", quota="general", total_score=260 if i == 0 else 250,
+                                  consent=i == 0,
                                   status="pending" if i == 3 else "withdrawn" if i == 4 else "participating",
                                   source={"Обр.программа": "Программная инженерия", "НПС/УГСН": "1.09.03.04 Программная инженерия",
+                                          "ОВП": "ДА" if i == 0 else "НЕТ", "ВПП": "ДА" if i == 0 else "НЕТ",
                                           "Фамилия": "СекретнаяФамилия", "СНИЛС": "11122233344", "Паспорт": "123456"}))
             s.add(SeatPlan(year=2026, direction="ИТ", campaign="бак", study_form="Очная", quota="general", seats=2))
             s.add(SeatPlan(year=2027, direction="Новая программа", campaign="маг", study_form="Заочная", quota="paid", seats=0))
@@ -72,7 +74,12 @@ def test_public_lists_and_private_registry_stay_separate(portal):
     group = {"year": 2026, "direction": "ИТ", "campaign": "бак", "study_form": "Очная"}
     data = portal.get("/public/rankings", params=group).json()
     assert len(data) == 5 and [r["rank"] for r in data["general"]] == [1, 2, 2]
-    assert set(data["general"][0]) == {"applicant_number", "score", "quota", "direction", "rank"}
+    assert set(data["general"][0]) == {
+        "applicant_number", "score", "quota", "direction", "rank",
+        "consent", "highest_priority", "passing_priority",
+    }
+    for flag in ("consent", "highest_priority", "passing_priority"):
+        assert data["general"][0][flag] is True and data["general"][1][flag] is False
     assert portal.get("/registry?year=2026").status_code in {401, 403}
     assert portal.get("/applicants/001234567").status_code in {401, 403}
 

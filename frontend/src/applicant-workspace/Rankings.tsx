@@ -3,6 +3,7 @@ import { PublicRatings } from "../portal/Ratings";
 import { PortalProvider, usePortal, usePublicLoad } from "../portal/state";
 import {
   groupKey,
+  levelName,
   primaryQuota,
   quotaOrder,
   type Catalog,
@@ -17,26 +18,28 @@ function RankingsContent() {
   const [group, setGroup] = useState("");
   const [form, setForm] = useState("");
   const [funding, setFunding] = useState("");
+  const [level, setLevel] = useState("");
+  const [highestPriorityOnly, setHighestPriorityOnly] = useState(false);
+  const [passingConsentOnly, setPassingConsentOnly] = useState(false);
   const [category, setCategory] = useState<Quota | null>(null);
   const allGroups = catalog.data?.groups ?? [];
   const forms = [...new Set(allGroups.map((item) => item.study_form))];
-  const groups = allGroups.filter((item) => {
-    return (
-      (!form || item.study_form === form) &&
-      (!funding ||
-        item.categories.some((quota) =>
-          funding === "paid" ? quota === "paid" : quota !== "paid",
-        ))
-    );
-  });
-  const selected = groups.find((item) => groupKey(item) === group) ?? groups[0];
-  const visibleQuotas = quotaOrder.filter((quota) =>
-    funding === "paid"
-      ? quota === "paid"
-      : funding === "budget"
-        ? quota !== "paid"
-        : true,
+  const levels = [...new Set(allGroups.map((item) => item.campaign))];
+  const visibleQuotas = quotaOrder.filter(
+    (quota) =>
+      !funding ||
+      (funding === "budget"
+        ? quota !== "paid" && quota !== "target"
+        : quota === funding),
   );
+  const groups = allGroups.filter(
+    (item) =>
+      (!form || item.study_form === form) &&
+      (!level || item.campaign === level) &&
+      (!funding ||
+        item.categories.some((quota) => visibleQuotas.includes(quota))),
+  );
+  const selected = groups.find((item) => groupKey(item) === group) ?? groups[0];
   const selectedQuota = selected && primaryQuota(selected);
   const years = [...new Set([year, ...(catalog.data?.years ?? [])])].sort(
     (a, b) => b - a,
@@ -54,6 +57,7 @@ function RankingsContent() {
               onChange={(event) => {
                 setYear(Number(event.target.value));
                 setForm("");
+                setLevel("");
                 setFunding("");
                 setGroup("");
                 setCategory(null);
@@ -80,6 +84,23 @@ function RankingsContent() {
             </select>
           </label>
           <label>
+            Уровень подготовки
+            <select
+              value={level}
+              onChange={(event) => {
+                setLevel(event.target.value);
+                setCategory(null);
+              }}
+            >
+              <option value="">Все квалификации</option>
+              {levels.map((value) => (
+                <option key={value} value={value}>
+                  {levelName(value)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
             Основа обучения
             <select
               value={funding}
@@ -91,6 +112,7 @@ function RankingsContent() {
               <option value="">Бюджет и платное</option>
               <option value="budget">Бюджет</option>
               <option value="paid">Платное</option>
+              <option value="target">Целевое</option>
             </select>
           </label>
           <label className="commission-checkbox">
@@ -99,6 +121,7 @@ function RankingsContent() {
               checked={demo}
               onChange={(event) => {
                 setDemo(event.target.checked);
+                setLevel("");
                 setForm("");
                 setFunding("");
                 setGroup("");
@@ -109,6 +132,25 @@ function RankingsContent() {
           </label>
         </div>
       </div>
+      <fieldset className="workspace-rankings-options">
+        <legend>Текущий конкурс</legend>
+        <label className="commission-checkbox">
+          <input
+            type="checkbox"
+            checked={highestPriorityOnly}
+            onChange={(event) => setHighestPriorityOnly(event.target.checked)}
+          />
+          С учётом высшего приоритета (ОВП)
+        </label>
+        <label className="commission-checkbox">
+          <input
+            type="checkbox"
+            checked={passingConsentOnly}
+            onChange={(event) => setPassingConsentOnly(event.target.checked)}
+          />
+          Только с согласием на высшем проходном приоритете (ВПП)
+        </label>
+      </fieldset>
       {demo && <p role="status">Демонстрационные списки и номера вымышлены.</p>}
       {catalog.error && <PortalNotice error>{catalog.error}</PortalNotice>}
       <PublicRatings
@@ -127,6 +169,8 @@ function RankingsContent() {
               ) ?? visibleQuotas[0]))
         }
         visibleQuotas={visibleQuotas}
+        highestPriorityOnly={highestPriorityOnly}
+        passingConsentOnly={passingConsentOnly}
         onQuota={setCategory}
         highlight=""
         loadingCatalog={catalog.loading}

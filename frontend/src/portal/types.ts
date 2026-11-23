@@ -14,6 +14,9 @@ export type PublicRank = {
   quota: Quota;
   direction: string;
   rank: number;
+  consent: boolean;
+  highest_priority: boolean;
+  passing_priority: boolean;
 };
 export type PublicRankings = Record<Quota, PublicRank[]>;
 export type Forecast = {
@@ -35,8 +38,13 @@ export const government = "https://www.gosuslugi.ru/vuzonline";
 export const groupKey = (g: Group) =>
   JSON.stringify([g.direction, g.campaign, g.study_form]);
 export const levelName = (campaign: string) =>
-  ({ бак: "Бакалавриат", маг: "Магистратура", асп: "Аспирантура" })[campaign] ||
-  campaign;
+  ({
+    спо: "Колледж",
+    бак: "Бакалавриат",
+    спец: "Специалитет",
+    маг: "Магистратура",
+    асп: "Аспирантура",
+  })[campaign] || campaign;
 export const quotaOrder: Quota[] = [
   "general",
   "special",

@@ -46,7 +46,7 @@ def group_query(year, direction=None, campaign=None, study_form=None, quota=None
     return q
 
 
-def ranking(session, year, direction, campaign, study_form, quota):
+def ranking(session, year, direction, campaign, study_form, quota, *, public_flags=False):
     """Ничьи разрешаются номером для стабильности; это не правило приказа о зачислении."""
     q = group_query(year, direction, campaign, study_form, quota).where(Application.status.in_(ACTIVE))
     rows = session.scalars(q.order_by(Application.total_score.desc(), Application.applicant_number)).all()
@@ -59,11 +59,18 @@ def ranking(session, year, direction, campaign, study_form, quota):
         previous = app.total_score
         result.append({"applicant_number": app.applicant_number, "score": app.total_score,
                        "quota": app.quota, "direction": app.direction, "rank": place})
+        if public_flags:
+            result[-1].update(
+                consent=app.consent,
+                highest_priority=normalize(app.source.get("ОВП")) in {"да", "true", "истина", "1"},
+                passing_priority=normalize(app.source.get("ВПП")) in {"да", "true", "истина", "1"},
+            )
     return result
 
 
-def all_rankings(session, year, direction, campaign, study_form):
-    return {q.value: ranking(session, year, direction, campaign, study_form, q.value) for q in Quota}
+def all_rankings(session, year, direction, campaign, study_form, *, public_flags=False):
+    return {q.value: ranking(session, year, direction, campaign, study_form, q.value,
+                             public_flags=public_flags) for q in Quota}
 
 
 def forecast(session, application):

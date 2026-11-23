@@ -57,6 +57,9 @@ function list(index: number, quota: Quota): PublicRank[] {
     quota,
     direction: group.direction,
     rank: i + 1,
+    consent: i % 2 === 0,
+    highest_priority: i % 3 === 0,
+    passing_priority: i % 4 === 0,
   }));
 }
 

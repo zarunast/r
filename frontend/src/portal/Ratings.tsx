@@ -20,6 +20,7 @@ import {
   official,
   quotaOrder,
   type PublicGroup,
+  type PublicRank,
   type PublicRankings,
   type Quota,
 } from "./types";
@@ -34,6 +35,8 @@ export function PublicRatings({
   highlight,
   loadingCatalog,
   visibleQuotas = quotaOrder,
+  highestPriorityOnly = false,
+  passingConsentOnly = false,
 }: {
   groups: PublicGroup[];
   selected?: PublicGroup;
@@ -43,6 +46,8 @@ export function PublicRatings({
   highlight: string;
   loadingCatalog: boolean;
   visibleQuotas?: Quota[];
+  highestPriorityOnly?: boolean;
+  passingConsentOnly?: boolean;
 }) {
   const { year, reload, demo } = usePortal();
   const [query, setQuery] = useState("");
@@ -57,7 +62,11 @@ export function PublicRatings({
     setPage(0);
     setQuery("");
   }, [selected, quota]);
-  const all = data?.[quota] || [];
+  useEffect(() => setPage(0), [highestPriorityOnly, passingConsentOnly]);
+  const matchesContest = (row: PublicRank) =>
+    (!highestPriorityOnly || row.highest_priority) &&
+    (!passingConsentOnly || (row.passing_priority && row.consent));
+  const all = (data?.[quota] || []).filter(matchesContest);
   const filtered = all.filter((r) => r.applicant_number.includes(query.trim()));
   const shown = filtered.slice(page * 15, (page + 1) * 15);
   const seats = selected?.seats[quota];
@@ -68,12 +77,21 @@ export function PublicRatings({
       return '"' + text.replaceAll('"', '""') + '"';
     };
     const rows = [
-      ["Место", "Номер ЕПГУ", "Баллы", "Категория", "Направление", "Год"],
+      [
+        "Место",
+        "Номер ЕПГУ",
+        "Баллы",
+        "Категория",
+        "Согласие",
+        "Направление",
+        "Год",
+      ],
       ...all.map((r) => [
         r.rank,
         r.applicant_number,
         r.score,
         quotaLabels[quota],
+        r.consent ? "Да" : "Нет",
         selected?.title,
         year,
       ]),
@@ -150,7 +168,11 @@ export function PublicRatings({
               aria-pressed={quota === q}
             >
               {quotaLabels[q]}
-              <span>{data ? numberFormat(data[q]?.length || 0) : "—"}</span>
+              <span>
+                {data
+                  ? numberFormat(data[q].filter(matchesContest).length)
+                  : "—"}
+              </span>
             </button>
           ))}
         </div>
@@ -243,6 +265,7 @@ export function PublicRatings({
                   <th>Номер абитуриента ЕПГУ</th>
                   <th>Итоговые баллы</th>
                   <th>Категория конкурса</th>
+                  <th>Согласие</th>
                 </tr>
               </thead>
               <tbody>
@@ -277,6 +300,19 @@ export function PublicRatings({
                       <span className="p-table-quota">
                         {quotaLabels[row.quota]}
                       </span>
+                    </td>
+                    <td>
+                      {row.consent ? (
+                        <span
+                          className="p-consent-check"
+                          aria-label="Согласие подано"
+                          title="Согласие подано"
+                        >
+                          ✓
+                        </span>
+                      ) : (
+                        <span aria-label="Согласие не подано">—</span>
+                      )}
                     </td>
                   </tr>
                 ))}

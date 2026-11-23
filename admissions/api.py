@@ -392,7 +392,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
 
     @app.get("/public/rankings")
     def public_rankings(year: int, direction: str, campaign: str, study_form: str, s=Depends(session)):
-        return svc.all_rankings(s, year, direction, campaign, study_form)
+        return svc.all_rankings(s, year, direction, campaign, study_form, public_flags=True)
 
     @app.get("/public/applicants/{number}")
     def public_applicant(number: str, year: int, s=Depends(session)):

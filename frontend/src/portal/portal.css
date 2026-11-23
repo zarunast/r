@@ -3359,3 +3359,9 @@ select {
     font-size: 24px;
   }
 }
+
+.p-consent-check {
+  color: #176747;
+  font-size: 1.15em;
+  font-weight: 700;
+}
