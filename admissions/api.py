@@ -430,6 +430,30 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         return Response(content, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         headers={"Content-Disposition": 'attachment; filename="contract.docx"'})
 
+    @app.get("/contracts/{contract_id}/document-fields", dependencies=private)
+    def contract_fields(contract_id: int, s=Depends(session)):
+        from .contract_fields import FIELDS, defaults
+        contract = svc.require(s, Contract, contract_id)
+        values = defaults(s, contract)
+        return [{"key": key, "label": label, "value": values.get(key) or ""} for key, label in FIELDS.items()]
+
+    @app.post("/contracts/{contract_id}/complete-document", dependencies=private)
+    def complete_document(contract_id: int, fields: dict[str, str], s=Depends(session)):
+        from .contract_fields import FIELDS
+        contract = svc.require(s, Contract, contract_id)
+        if fields.keys() - FIELDS.keys():
+            raise ValueError("Передано неизвестное поле договора")
+        missing = [label for key, label in FIELDS.items() if not fields.get(key, "").strip()]
+        if missing:
+            raise ValueError("Заполните поля: " + ", ".join(missing))
+        values = {key: value.strip() for key, value in fields.items()}
+        if any(len(value) > 240 or "{{" in value or "\n" in value or "\r" in value for value in values.values()):
+            raise ValueError("Поля договора должны содержать одну строку до 240 символов")
+        template = Path(__file__).with_name("admission_2026") / "documents" / "contract-with-addendum.docx"
+        content = svc.render_contract(s, contract, template, values)
+        return Response(content, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        headers={"Content-Disposition": 'attachment; filename="contract.docx"'})
+
     @app.post("/imports/payments", dependencies=private)
     def payments(file: UploadFile = File(), user=Depends(staff), s=Depends(session)):
         with upload_path(file, ".xlsx") as path:

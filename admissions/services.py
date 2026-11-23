@@ -317,7 +317,7 @@ def pdf_bytes(rows):
     return out.getvalue()
 
 
-def render_contract(session, contract, template):
+def render_contract(session, contract, template, fields=None):
     """Маркеры {{name}} могут быть разбиты Word на несколько runs; оформление абзаца сохраняется частично."""
     app = require(session, Application, contract.application_id)
     person = require(session, Applicant, app.applicant_number)
@@ -326,6 +326,8 @@ def render_contract(session, contract, template):
               "direction": app.direction, "study_form": app.study_form, "year": str(app.year),
               "snils": person.profile.get("СНИЛС", ""), "passport_series": person.profile.get("Серия", ""),
               "passport_number": person.profile.get("Номер", ""), "date": now().date().isoformat()}
+    if fields:
+        values.update(fields)
     document = Document(template)
     def replace_container(container):
         for paragraph in container.paragraphs:

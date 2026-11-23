@@ -41,6 +41,10 @@ STATUS = {normalize(k): v for k, v in {
 }.items()}
 
 
+ADDRESS_HEADERS = {"адрес", "адреспроживания", "адресрегистрации", "адресместажительства",
+                   "адресместарегистрации", "адресфактическогопроживания", "адреспрописки"}
+
+
 def text(value):
     if value is None:
         return ""
@@ -151,7 +155,7 @@ def read_epgu(path, year, sheet=None):
                             "ДУЛ", "Серия", "Номер", "Страна выдачи", "Дата выдачи",
                             "Тип документа ОУ", "Дата выдачи ОУ", "Организация, выдавшая документ ОУ",
                             "Наличие ОУ", "Документы доп.", "Необходимость в общежитии"}
-                profile = {k: v for k, v in raw.items() if k in personal}
+                profile = {k: v for k, v in raw.items() if k in personal or normalize(k) in ADDRESS_HEADERS}
                 applicant = {"number": number, "surname": text(get("surname")),
                              "first_name": text(get("first_name")), "patronymic": text(get("patronymic")),
                              "profile": profile}

@@ -345,3 +345,66 @@ def test_workbook_draft_and_contract_payment(web):
     reference = client.get("/reports/bachelor-seat-reference", headers=auth).json()
     assert len(reference) == 58
     assert sum(row["seats"]["general"] for row in reference if row["study_form"] == "Очная") == 648
+
+
+def test_complete_contract_validates_and_fills_both_forms(web):
+    import io
+    from docx import Document
+
+    client, auth = web
+    with client.app.state.db.uow() as db:
+        app = Application(applicant_number="001", year=2026, campaign="бак",
+                          direction="ИТ", study_form="Очная", quota="paid", total_score=250)
+        db.add(app)
+        db.flush()
+        app_id = app.id
+    response = client.post("/contracts", headers=auth, json={"application_id": app_id, "number": "ТЕСТ-01"})
+    assert response.status_code == 201
+    prefix = f"/contracts/{response.json()['id']}"
+    fields = client.get(prefix + "/document-fields", headers=auth).json()
+    assert next(field for field in fields if field["key"] == "full_name")["value"] == "Тестов Иван"
+    assert client.post(prefix + "/complete-document", headers=auth, json={}).status_code == 400
+    values = {field["key"]: field["value"] or "Тестовое значение" for field in fields}
+    filled = client.post(prefix + "/complete-document", headers=auth, json=values)
+    assert filled.status_code == 200
+    doc = Document(io.BytesIO(filled.content))
+    body = "\n".join(p.text for p in doc.paragraphs)
+    assert "ДОПОЛНИТЕЛЬНОЕ СОГЛАШЕНИЕ" in body and body.count("ТЕСТ-01") >= 2
+    assert "{{" not in body and len(doc.tables) == 2
+    assert all("Подпись __________________" in cell.text for t in doc.tables for cell in t.rows[1].cells[1:])
+
+
+def test_contract_suggests_year_tariff_and_faculty_by_profile(web):
+    from admissions.contract_fields import tuition_defaults
+
+    client, auth = web
+    with client.app.state.db.uow() as db:
+        app = Application(
+            applicant_number="001", year=2026, campaign="бак",
+            direction="ПИ(КПД)_заоч_плат", study_form="Заочная", quota="paid",
+            source={
+                "НПС/УГСН": "1.09.03.03 Прикладная информатика",
+                "Обр.программа": "Компьютерное проектирование и дизайн",
+                "Адрес регистрации": "Учебный адрес из выгрузки",
+            },
+        )
+        db.add(app)
+        db.flush()
+        app_id = app.id
+        assert tuition_defaults(app)["faculty"] == "Учебно-научный институт транспорта"
+        different_profile = Application(year=2026, study_form="Заочная", direction="09.03.03",
+                                        source={"Обр.программа": "Информационные технологии в цифровой экономике"})
+        assert tuition_defaults(different_profile)["faculty"] == "Факультет отраслевой и цифровой экономики"
+        ambiguous = Application(year=2026, study_form="Заочная", direction="09.03.03", source={})
+        assert tuition_defaults(ambiguous) == {}
+        master_part_time = Application(year=2026, study_form="Очно-заочная", direction="10.04.01", source={})
+        assert tuition_defaults(master_part_time) == {"faculty": "Факультет информационных технологий"}
+
+    response = client.post("/contracts", headers=auth, json={"application_id": app_id, "number": "ТЕСТ-ТАРИФ"})
+    fields = client.get(f"/contracts/{response.json()['id']}/document-fields", headers=auth).json()
+    values = {f["key"]: f["value"] for f in fields}
+    assert values["full_name"] == "Тестов Иван"
+    assert values["student_phone"] == "+70000000000"
+    assert values["student_address"] == "Учебный адрес из выгрузки"
+    assert values["year_cost"].startswith("70 550,00")
+    assert not values["total_cost"] and not values["semester_cost"]

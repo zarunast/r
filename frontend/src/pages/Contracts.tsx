@@ -322,6 +322,61 @@ function CreateContract({ onClose }: { onClose: () => void }) {
   );
 }
 
+function CompleteContract({ id }: { id: number }) {
+  const { download, notify } = useStore();
+  const { data, loading, error } = useLoad<
+    { key: string; label: string; value: string }[]
+  >(`/contracts/${id}/document-fields`);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState("");
+  if (loading) return <Busy />;
+  if (error) return <ErrorState error={error} />;
+  return (
+    <form
+      onSubmit={async (event) => {
+        event.preventDefault();
+        const fields = Object.fromEntries(new FormData(event.currentTarget));
+        setBusy(true);
+        setFailure("");
+        try {
+          await download(
+            `/contracts/${id}/complete-document`,
+            "Договор и допсоглашение.docx",
+            jsonBody(fields, "POST"),
+          );
+          notify("Договор и допсоглашение сформированы");
+        } catch (error) {
+          setFailure((error as Error).message);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <p className="form-hint">
+        Проверьте данные из карточки. Если программа и форма обучения найдены в
+        тарифах БГТУ, стоимость первого курса и факультет уже подставлены.
+        Укажите недостающие данные заказчика, полную стоимость и график оплаты.
+      </p>
+      <div className="form-grid">
+        {data?.map(({ key, label, value }) => (
+          <label className="field" key={key}>
+            {label}
+            <input name={key} required maxLength={240} defaultValue={value} />
+          </label>
+        ))}
+      </div>
+      {failure && <ErrorState error={failure} />}
+      <button
+        type="submit"
+        className="button primary"
+        disabled={busy || !data?.length}
+      >
+        {busy ? "Формирование…" : "Скачать заполненный Word"}
+      </button>
+    </form>
+  );
+}
+
 function ContractModal({
   contract,
   onClose,
@@ -335,6 +390,7 @@ function ContractModal({
   const [paid, setPaid] = useState(contract.paid);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [showComplete, setShowComplete] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const history = useLoad<
     {
@@ -475,6 +531,14 @@ function ContractModal({
           <SaveButton busy={busy} label="Обновить статус" />
         </div>
       </form>
+      {!demo && (
+        <details
+          onToggle={(event) => setShowComplete(event.currentTarget.open)}
+        >
+          <summary>Заполнить договор и допсоглашение</summary>
+          {showComplete && <CompleteContract id={contract.id} />}
+        </details>
+      )}
       <input
         ref={input}
         type="file"
