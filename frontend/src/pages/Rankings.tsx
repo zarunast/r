@@ -51,6 +51,8 @@ export function Rankings() {
   const [groupIndex, setGroupIndex] = useState(0);
   const [quota, setQuota] = useState<Quota>("general");
   const [plan, setPlan] = useState(false);
+  const [reference, setReference] = useState(false);
+  const [order, setOrder] = useState(false);
   const [person, setPerson] = useState<string | null>(null);
   const group = catalog.data?.[groupIndex] || catalog.data?.[0];
   const query = params({ year, ...group });
@@ -87,14 +89,14 @@ export function Rankings() {
         </button>
         <button
           className="button primary"
-          disabled={!rows.length}
+          disabled={demo ? !rows.length : !group}
           onClick={async () => {
             try {
               if (demo) csvFile(exportRows(), "ranking-demo.csv");
               else
                 await download(
-                  `/reports/ranking?${query}&quota=${quota}&format=xlsx`,
-                  "ranking.xlsx",
+                  `/reports/ranking-workbook?year=${year}`,
+                  `Конкурсные списки ${year}.xlsx`,
                 );
               notify("Рейтинг выгружен");
             } catch (e) {
@@ -103,10 +105,10 @@ export function Rankings() {
           }}
         >
           <ArrowDownToLine size={17} />
-          {demo ? "Экспорт CSV" : "Экспорт Excel"}
+          {demo ? "Экспорт CSV" : "Скачать все списки Excel"}
         </button>
       </PageHeading>
-      <section className="panel ranking-controls">
+      <section className="panel ranking-controls ranking-controls-expanded">
         <GroupPicker
           groups={catalog.data || []}
           index={groupIndex}
@@ -118,8 +120,22 @@ export function Rankings() {
           onClick={() => setPlan(true)}
         >
           <Settings2 size={16} />
-          План приёма
+          Задать места
         </button>
+        {!demo && year === 2026 && (
+          <button className="button" onClick={() => setReference(true)}>
+            Места бакалавриата 2026
+          </button>
+        )}
+        {!demo && (
+          <button
+            className="button"
+            disabled={!group || !rows.length}
+            onClick={() => setOrder(true)}
+          >
+            Сформировать приказ
+          </button>
+        )}
       </section>
       {catalog.error && <ErrorState error={catalog.error} />}
       <div className="ranking-metrics">
@@ -237,12 +253,22 @@ export function Rankings() {
         )}
         <div className="table-note">
           <CircleHelp size={15} />
-          Рейтинг отражает текущую ситуацию. При равных баллах место одинаковое;
-          окончательное зачисление оформляется приказом.
+          Для выгрузки ЕПГУ используется её итоговая сумма. При ручном вводе
+          учитываются выбранные экзамены и индивидуальные достижения. При равной
+          сумме система показывает одинаковое место.
         </div>
       </section>
       {person && (
         <ApplicantCard number={person} onClose={() => setPerson(null)} />
+      )}
+      {reference && <SeatReference onClose={() => setReference(false)} />}
+      {order && group && (
+        <OrderModal
+          group={group}
+          quota={quota}
+          rows={rows}
+          onClose={() => setOrder(false)}
+        />
       )}
       {plan && group && (
         <PlanModal
@@ -253,6 +279,210 @@ export function Rankings() {
         />
       )}
     </>
+  );
+}
+
+type SeatReferenceRow = {
+  code: string;
+  profile: string;
+  study_form: string;
+  seats: Record<Quota, number>;
+};
+
+function SeatReference({ onClose }: { onClose: () => void }) {
+  const { data, loading, error } = useLoad<SeatReferenceRow[]>(
+    "/reports/bachelor-seat-reference",
+  );
+  const [form, setForm] = useState("Очная");
+  const [filter, setFilter] = useState("");
+  const categories = Object.keys(quotaLabels) as Quota[];
+  const rows =
+    data?.filter(
+      (row) =>
+        row.study_form === form &&
+        (row.code + " " + row.profile)
+          .toLowerCase()
+          .includes(filter.toLowerCase().trim()),
+    ) || [];
+  return (
+    <Modal
+      title="Места бакалавриата на 2026–2027 год"
+      subtitle="Сведения БГТУ от 15.04.2026"
+      onClose={onClose}
+      wide
+    >
+      <div className="form-grid">
+        <label className="field">
+          Форма обучения
+          <select
+            value={form}
+            onChange={(event) => setForm(event.target.value)}
+          >
+            {["Очная", "Очно-заочная", "Заочная"].map((label) => (
+              <option key={label}>{label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          Код или профиль
+          <input
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+        </label>
+      </div>
+      {loading && <Busy />}
+      {error && <ErrorState error={error} />}
+      {!!data && (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Код и профиль</th>
+                {categories.map((quota) => (
+                  <th key={quota}>{quotaLabels[quota]}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.code + row.profile}>
+                  <th scope="row">
+                    {row.code} · {row.profile}
+                  </th>
+                  {categories.map((quota) => (
+                    <td key={quota}>{row.seats[quota]}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="form-hint">
+        Чтобы применить число к конкурсу, выберите конкурсную группу и
+        воспользуйтесь кнопкой «Задать места».
+      </p>
+      <a
+        className="button"
+        href={
+          (import.meta.env.DEV ? "/api" : "") +
+          "/public/admission/documents/bachelor-seats"
+        }
+      >
+        Исходный PDF
+      </a>
+    </Modal>
+  );
+}
+
+function OrderModal({
+  group,
+  quota,
+  rows,
+  onClose,
+}: {
+  group: Group;
+  quota: Quota;
+  rows: Rank[];
+  onClose: () => void;
+}) {
+  const { year, download, notify } = useStore();
+  const [selected, setSelected] = useState<number[]>([]);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal
+      title="Проект приказа о зачислении"
+      subtitle={group.direction + " · " + quotaLabels[quota]}
+      onClose={onClose}
+      wide
+    >
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setError("");
+          setBusy(true);
+          try {
+            const fields = new FormData(event.currentTarget);
+            await download(
+              "/reports/enrollment-draft",
+              "enrollment-draft.docx",
+              jsonBody(
+                {
+                  year,
+                  direction: group.direction,
+                  campaign: group.campaign,
+                  study_form: group.study_form,
+                  quota,
+                  ...Object.fromEntries(fields),
+                  application_ids: selected,
+                },
+                "POST",
+              ),
+            );
+            notify("Проект приказа сформирован");
+          } catch (failure) {
+            setError((failure as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <div className="form-grid">
+          <label className="field">
+            Номер приказа
+            <input name="order_number" required maxLength={100} />
+          </label>
+          <label className="field">
+            Дата приказа
+            <input name="order_date" type="date" required />
+          </label>
+          <label className="field">
+            Дата зачисления
+            <input name="enrolled_at" type="date" required />
+          </label>
+        </div>
+        <p className="form-hint">
+          Выберите абитуриентов. Скачивание проекта Word не меняет статусы
+          заявлений.
+        </p>
+        <fieldset className="order-candidates">
+          <legend>Кандидаты · выбрано {selected.length}</legend>
+          {rows
+            .filter(
+              (row) =>
+                row.status !== "enrolled" && (quota === "paid" || row.consent),
+            )
+            .map((row) => (
+              <label key={row.application_id}>
+                <input
+                  type="checkbox"
+                  checked={selected.includes(row.application_id)}
+                  onChange={(event) =>
+                    setSelected((current) =>
+                      event.target.checked
+                        ? [...current, row.application_id]
+                        : current.filter((id) => id !== row.application_id),
+                    )
+                  }
+                />
+                {row.full_name} · {row.applicant_number} · {row.score} баллов
+              </label>
+            ))}
+        </fieldset>
+        {error && <ErrorState error={error} />}
+        <div className="modal-footer">
+          <button
+            className="button primary"
+            type="submit"
+            disabled={busy || !selected.length}
+          >
+            {busy ? "Формирование…" : "Скачать проект Word"}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -270,6 +500,16 @@ function PlanModal({
   const { api, year, refresh, notify } = useStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [seatValue, setSeatValue] = useState(String(seats ?? 0));
+  const reference = useLoad<SeatReferenceRow[]>(
+    year === 2026 && /бак/i.test(group.campaign)
+      ? "/reports/bachelor-seat-reference"
+      : null,
+  );
+  const matchingForm =
+    reference.data?.filter(
+      (row) => row.study_form.toLowerCase() === group.study_form.toLowerCase(),
+    ) || [];
   return (
     <Modal
       title="План приёма"
@@ -306,10 +546,34 @@ function PlanModal({
             type="number"
             min={0}
             max={100000}
-            defaultValue={seats || 0}
+            value={seatValue}
+            onChange={(event) => setSeatValue(event.target.value)}
             required
           />
         </label>
+        {matchingForm.length > 0 && (
+          <label className="field">
+            Подставить из справочника бакалавриата
+            <select
+              defaultValue=""
+              onChange={(event) => {
+                if (event.target.value !== "")
+                  setSeatValue(
+                    String(
+                      matchingForm[Number(event.target.value)].seats[quota],
+                    ),
+                  );
+              }}
+            >
+              <option value="">Выберите соответствующий профиль</option>
+              {matchingForm.map((row, index) => (
+                <option value={index} key={row.code + row.profile}>
+                  {row.code} · {row.profile} · {row.seats[quota]} мест
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <p className="form-hint">
           План используется для оценки заполненности и положения абитуриентов в
           рейтинге.

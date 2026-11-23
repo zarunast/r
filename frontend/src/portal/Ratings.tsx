@@ -33,6 +33,7 @@ export function PublicRatings({
   onQuota,
   highlight,
   loadingCatalog,
+  visibleQuotas = quotaOrder,
 }: {
   groups: PublicGroup[];
   selected?: PublicGroup;
@@ -41,6 +42,7 @@ export function PublicRatings({
   onQuota: (q: Quota) => void;
   highlight: string;
   loadingCatalog: boolean;
+  visibleQuotas?: Quota[];
 }) {
   const { year, reload, demo } = usePortal();
   const [query, setQuery] = useState("");
@@ -140,7 +142,7 @@ export function PublicRatings({
           role="group"
           aria-label="Категории конкурса"
         >
-          {quotaOrder.map((q) => (
+          {visibleQuotas.map((q) => (
             <button
               key={q}
               className={quota === q ? "active" : ""}

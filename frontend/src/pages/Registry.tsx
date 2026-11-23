@@ -16,6 +16,8 @@ import {
   initials,
   numberFormat,
   params,
+  locationLabels,
+  stageLabels,
   quotaLabels,
   statusLabels,
   type Group,
@@ -256,6 +258,25 @@ export function Registry({ onImport }: { onImport: () => void }) {
   );
 }
 
+function ApplicantFields({ fields }: { fields: Record<string, unknown> }) {
+  return (
+    <dl className="detail-list">
+      {Object.entries(fields).map(([key, value]) => (
+        <div key={key}>
+          <dt>{key}</dt>
+          <dd>
+            {value == null || value === ""
+              ? "—"
+              : typeof value === "object"
+                ? JSON.stringify(value)
+                : String(value)}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 export function ApplicantCard({
   number,
   onClose,
@@ -365,6 +386,22 @@ export function ApplicantCard({
                     <Badge tone={a.status === "pending" ? "amber" : "blue"}>
                       {statusLabels[a.status] || a.status}
                     </Badge>
+                    <ApplicantFields
+                      fields={{
+                        Кампания: a.campaign,
+                        "Согласие на зачисление": a.consent
+                          ? "Подано"
+                          : "Не подано",
+                        "Индивидуальные достижения": a.achievements,
+                        ...a.exams,
+                      }}
+                    />
+                    {a.source && Object.keys(a.source).length > 0 && (
+                      <details>
+                        <summary>Поля исходной выгрузки</summary>
+                        <ApplicantFields fields={a.source} />
+                      </details>
+                    )}
                   </div>
                   <div className="application-score">
                     <strong>{a.total_score}</strong>
@@ -381,22 +418,21 @@ export function ApplicantCard({
               )}
             </div>
           ) : (
-            <dl className="detail-list">
-              {[
-                "ДУЛ",
-                "Серия",
-                "Номер",
-                "Дата выдачи",
-                "Тип документа ОУ",
-                "Организация, выдавшая документ ОУ",
-                "Документы доп.",
-              ].map((key) => (
-                <div key={key}>
-                  <dt>{key}</dt>
-                  <dd>{String(data.profile[key] || "Не указано")}</dd>
-                </div>
+            <>
+              <ApplicantFields fields={data.profile} />
+              {data.contracts.map((contract) => (
+                <ApplicantFields
+                  key={contract.id}
+                  fields={{
+                    "Номер договора": contract.number,
+                    Оплата: contract.paid ? "Подтверждена" : "Не подтверждена",
+                    Этап: stageLabels[contract.stage] || contract.stage,
+                    "Где находится":
+                      locationLabels[contract.location] || contract.location,
+                  }}
+                />
               ))}
-            </dl>
+            </>
           )}
         </>
       )}

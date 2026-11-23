@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { AdmissionPage } from "../applicant-workspace/Admission";
 import { useLoad, useStore } from "../store";
 
-type PageEntry = { key: string; title: string };
+type PageEntry = { key: string; title: string; href: string };
 type Person = { number: string; name: string };
 type ExamApplication = {
   id: number;
@@ -45,12 +45,24 @@ function SiteEditor({ token }: { token: string }) {
         </label>
       )}
       {entry && (
-        <AdmissionPage
-          key={entry.key}
-          id={entry.key}
-          title={entry.title}
-          editorToken={token}
-        />
+        <>
+          <p>
+            <a
+              className="button"
+              href={entry.href}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Открыть опубликованную страницу
+            </a>
+          </p>
+          <AdmissionPage
+            key={entry.key}
+            id={entry.key}
+            title={entry.title}
+            editorToken={token}
+          />
+        </>
       )}
     </>
   );
@@ -341,7 +353,7 @@ export function RoleWorkspace() {
           className="button"
           onClick={() => {
             logout();
-            window.location.hash = "/login/" + user.role_id;
+            window.location.hash = "/login";
           }}
         >
           Выйти

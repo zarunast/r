@@ -3589,3 +3589,60 @@ tbody tr:hover {
   text-decoration: underline;
   text-underline-offset: 0.2em;
 }
+
+.role-workspace .admission-form[hidden] {
+  display: none;
+}
+
+.editor-view-switch {
+  display: flex;
+  gap: 0.5rem;
+  margin-block: 0.75rem;
+}
+
+.editor-view-switch button[aria-pressed="true"] {
+  border-color: #245fdd;
+  color: #174fc8;
+}
+
+.editor-preview {
+  background: #f7f8f3;
+  color: #173b33;
+  border: 1px solid #d7ded3;
+  border-radius: 0.75rem;
+  padding: clamp(1rem, 3vw, 2rem);
+  overflow-wrap: anywhere;
+}
+
+.editor-preview .admission-block {
+  margin-block: 1rem;
+  padding: 1rem;
+  background: white;
+  border: 1px solid #d7ded3;
+  border-radius: 0.5rem;
+}
+
+.editor-preview .admission-paragraph {
+  white-space: pre-line;
+  margin-block: 0.75rem;
+}
+
+.ranking-controls-expanded {
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.order-candidates {
+  max-height: 19rem;
+  overflow-y: auto;
+  border: 1px solid #d6dfe8;
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+.order-candidates label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding-block: 0.25rem;
+}

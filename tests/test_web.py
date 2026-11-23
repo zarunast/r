@@ -208,7 +208,10 @@ def test_editor_and_examiner_are_isolated(web):
     def login(role):
         credentials = {"username": role, "password": f"test-{role}-password"}
         other_role = "examiner" if role == "editor" else "editor"
-        assert client.post("/auth/token", data=credentials).status_code == 401
+        common_login = client.post("/auth/token", data=credentials)
+        assert common_login.status_code == 200
+        common_headers = {"Authorization": "Bearer " + common_login.json()["access_token"]}
+        assert client.get("/auth/me", headers=common_headers).json()["role_id"] == role
         assert client.post(f"/auth/token/{other_role}", data=credentials).status_code == 401
         response = client.post(f"/auth/token/{role}", data=credentials)
         assert response.status_code == 200
@@ -278,3 +281,67 @@ def test_public_assistant_uses_published_content_only(tmp_path, monkeypatch):
         assert "Публичная информация о заселении." in request_body["input"]
         assert "СекретФамилия" not in request_body["input"]
         assert request_body["store"] is False
+
+
+def test_dashboard_works_without_iana_timezones(web, monkeypatch):
+    from zoneinfo import ZoneInfoNotFoundError
+
+    def unavailable(_key):
+        raise ZoneInfoNotFoundError("Europe/Moscow")
+
+    monkeypatch.setattr("admissions.services.ZoneInfo", unavailable)
+    client, auth = web
+    response = client.get("/dashboard?year=2026", headers=auth)
+    assert response.status_code == 200
+    assert response.json()["applicants"] == 1
+    assert response.json()["applications_today"] == 1
+
+
+def test_workbook_draft_and_contract_payment(web):
+    import io
+    from docx import Document
+    from openpyxl import load_workbook
+    from sqlalchemy import select
+
+    client, auth = web
+    with client.app.state.db.uow() as db:
+        budget = db.scalar(select(Application))
+        budget_id = budget.id
+        paid = Application(applicant_number="001", year=2026, campaign="бак",
+                           direction="Физика", study_form="Очная", quota="paid", total_score=251)
+        db.add(paid)
+        db.flush()
+        paid_id = paid.id
+    workbook = client.get("/reports/ranking-workbook?year=2026", headers=auth)
+    assert workbook.status_code == 200
+    excel = load_workbook(io.BytesIO(workbook.content), read_only=True)
+    try:
+        assert len(excel.sheetnames) == 5
+        assert list(excel["Основной конкурс"].values)[1][:4] == ("ИТ", "бак", "Очная", 1)
+        assert list(excel["Платное обучение"].values)[1][0] == "Физика"
+        assert len(list(excel["Особая квота"].values)) == 1
+    finally:
+        excel.close()
+
+    group = {"year": 2026, "direction": "ИТ", "campaign": "бак", "study_form": "Очная", "quota": "general"}
+    payload = dict(group, application_ids=[budget_id], order_number="883-3",
+                   order_date="2026-08-03", enrolled_at="2026-09-01")
+    assert client.post("/reports/enrollment-draft", headers=auth, json=payload).status_code == 400
+    assert client.put("/seat-plans", headers=auth, json=dict(group, seats=1)).status_code == 200
+    draft = client.post("/reports/enrollment-draft", headers=auth, json=payload)
+    assert draft.status_code == 200
+    doc = Document(io.BytesIO(draft.content))
+    assert any("ПРОЕКТ ПРИКАЗА" in paragraph.text for paragraph in doc.paragraphs)
+    assert doc.tables[0].rows[1].cells[1].text == "001"
+    assert client.get("/applicants/001", headers=auth).json()["applications"][0]["status"] == "participating"
+
+    contract = client.post("/contracts", headers=auth, json={"application_id": paid_id, "number": "Д-1"}).json()
+    assert client.patch(f"/contracts/{contract['id']}", headers=auth, json={"paid": True}).json()["paid"]
+    history = client.get(f"/contracts/{contract['id']}/history", headers=auth).json()
+    assert history[-1]["changes"]["paid"] == {"from": False, "to": True}
+    assert client.get("/public/admission/documents/tuition-contract-sample").content.startswith(b"%PDF-")
+    assert client.get("/public/admission/documents/tuition-contract-addendum").content.startswith(b"%PDF-")
+
+    reference = client.get("/reports/bachelor-seat-reference", headers=auth).json()
+    assert len(reference) == 58
+    assert sum(row["seats"]["general"] for row in reference if row["study_form"] == "Очная") == 648

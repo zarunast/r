@@ -57,6 +57,8 @@ export type Application = Group & {
   total_score: number;
   achievements: number;
   exams: Record<string, number>;
+  source?: Record<string, unknown>;
+  enrolled_at?: string | null;
   consent: boolean;
 };
 export type PersonDetail = Omit<

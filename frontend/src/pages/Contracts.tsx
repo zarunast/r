@@ -332,6 +332,7 @@ function ContractModal({
   const { api, refresh, notify, download, demo } = useStore();
   const [location, setLocation] = useState(contract.location);
   const [stage, setStage] = useState(contract.stage);
+  const [paid, setPaid] = useState(contract.paid);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const input = useRef<HTMLInputElement>(null);
@@ -376,7 +377,10 @@ function ContractModal({
           try {
             await api(
               `/contracts/${contract.id}`,
-              jsonBody({ location, stage }, "PATCH"),
+              jsonBody(
+                { location, stage, paid: stage === "cancelled" ? false : paid },
+                "PATCH",
+              ),
             );
             refresh();
             notify("Статус договора обновлён");
@@ -419,8 +423,20 @@ function ContractModal({
             </select>
           </label>
         </div>
+        <label className="field">
+          Статус оплаты
+          <select
+            value={paid && stage !== "cancelled" ? "paid" : "unconfirmed"}
+            disabled={stage === "cancelled"}
+            onChange={(event) => setPaid(event.target.value === "paid")}
+          >
+            <option value="unconfirmed">Оплата не подтверждена</option>
+            <option value="paid">Оплата подтверждена</option>
+          </select>
+        </label>
         <p className="form-hint">
-          Оплата подтверждается только загрузкой выгрузки из бухгалтерии.
+          Статус можно указать вручную по подтверждению бухгалтерии или
+          загрузить выгрузку оплат.
         </p>
         {error && <ErrorState error={error} />}
         <div className="modal-footer">
@@ -436,8 +452,26 @@ function ContractModal({
             }}
           >
             <ArrowDownToLine size={16} />
-            Договор Word
+            Заполнить шаблон Word
           </button>
+          <a
+            className="button"
+            href={
+              (import.meta.env.DEV ? "/api" : "") +
+              "/public/admission/documents/tuition-contract-sample"
+            }
+          >
+            Бланк договора PDF
+          </a>
+          <a
+            className="button"
+            href={
+              (import.meta.env.DEV ? "/api" : "") +
+              "/public/admission/documents/tuition-contract-addendum"
+            }
+          >
+            Допсоглашение PDF
+          </a>
           <SaveButton busy={busy} label="Обновить статус" />
         </div>
       </form>
@@ -487,7 +521,10 @@ function ContractModal({
                           ? stageLabels
                           : k === "location"
                             ? locationLabels
-                            : {};
+                            : {
+                                true: "Подтверждена",
+                                false: "Не подтверждена",
+                              };
                       return typeof v === "object" && v !== null
                         ? `${k === "stage" ? "Этап" : k === "location" ? "Местоположение" : "Оплата"}: ${labels[String(v.to)] || String(v.to)}`
                         : k === "created"

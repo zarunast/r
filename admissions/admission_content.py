@@ -91,7 +91,9 @@ def attach_admission_content(app, session, staff):
     @app.get("/admission-content/pages", dependencies=[Depends(staff)])
     def editable_pages(s=Depends(session)):
         saved = dict(s.execute(select(AdmissionPage.key, AdmissionPage.content)).all())
-        return [{"key": key, "title": saved.get(key, page)["title"]} for key, page in DEFAULTS.items()]
+        from .assistant import page_link
+        return [{"key": key, "title": saved.get(key, page)["title"], "href": page_link(key)}
+                for key, page in DEFAULTS.items()]
 
     def page_default(key):
         if key not in DEFAULTS:

@@ -183,15 +183,20 @@ function PageEditor({
   saved,
   onSave,
   documents,
+  available,
+  media,
 }: {
   saved: Page;
   onSave: (page: Page) => Promise<Page>;
   documents: Content["documents"];
+  available: string[];
+  media: Media[];
 }) {
   const [draft, setDraft] = useState(saved);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  const [preview, setPreview] = useState(false);
 
   function updateBlock(index: number, patch: Partial<Block>) {
     setDraft((previous) => ({
@@ -219,176 +224,219 @@ function PageEditor({
   }
 
   return (
-    <form className="admission-form" onSubmit={submit}>
-      <fieldset disabled={busy}>
-        <legend>Содержание страницы</legend>
-        <label>
-          Заголовок страницы
-          <input
-            required
-            maxLength={240}
-            value={draft.title}
-            onChange={(event) => {
-              setDraft({ ...draft, title: event.target.value });
-              setStatus("");
-            }}
-          />
-        </label>
-        {draft.blocks.map((block, index) => (
-          <details className="admission-edit-block" key={index}>
-            <summary>{block.heading || `Блок ${index + 1}`}</summary>
-            <label>
-              Заголовок блока
-              <input
-                maxLength={220}
-                value={block.heading}
-                onChange={(event) =>
-                  updateBlock(index, { heading: event.target.value })
-                }
-              />
-            </label>
-            <label>
-              Текст блока
-              <textarea
-                rows={5}
-                maxLength={10000}
-                value={block.text}
-                onChange={(event) =>
-                  updateBlock(index, { text: event.target.value })
-                }
-              />
-            </label>
-            <label>
-              Прикрепить документ
-              <select
-                value=""
-                onChange={(event) => {
-                  const key = event.target.value;
-                  if (key)
-                    updateBlock(index, {
-                      documents: [...block.documents, key],
-                    });
-                }}
-              >
-                <option value="">Выбрать документ</option>
-                {Object.entries(documents)
-                  .filter(([key]) => !block.documents.includes(key))
-                  .map(([key, label]) => (
-                    <option key={key} value={key}>
-                      {label}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            {block.documents.map((key) => (
-              <div key={key}>
-                {documents[key]}{" "}
-                <button
-                  type="button"
-                  onClick={() =>
-                    updateBlock(index, {
-                      documents: block.documents.filter((item) => item !== key),
-                    })
-                  }
-                >
-                  Убрать ссылку
-                </button>
-              </div>
-            ))}
-            {block.columns.map((column, columnIndex) => (
-              <label key={columnIndex}>
-                Название столбца {columnIndex + 1}
+    <div className="editor-page-content">
+      <div className="editor-view-switch" aria-label="Режим страницы">
+        <button
+          type="button"
+          className="button"
+          aria-pressed={!preview}
+          onClick={() => setPreview(false)}
+        >
+          Редактирование
+        </button>
+        <button
+          type="button"
+          className="button"
+          aria-pressed={preview}
+          onClick={() => setPreview(true)}
+        >
+          Предпросмотр
+        </button>
+      </div>
+      {preview && (
+        <article className="editor-preview" aria-label="Предпросмотр страницы">
+          <h2>{draft.title}</h2>
+          {draft.blocks.map((block, index) => (
+            <BlockView
+              key={index}
+              block={block}
+              documents={documents}
+              available={available}
+            />
+          ))}
+          <MediaGallery items={media} />
+        </article>
+      )}
+      <form hidden={preview} className="admission-form" onSubmit={submit}>
+        <fieldset disabled={busy}>
+          <legend>Содержание страницы</legend>
+          <label>
+            Заголовок страницы
+            <input
+              required
+              maxLength={240}
+              value={draft.title}
+              onChange={(event) => {
+                setDraft({ ...draft, title: event.target.value });
+                setStatus("");
+              }}
+            />
+          </label>
+          {draft.blocks.map((block, index) => (
+            <details className="admission-edit-block" key={index}>
+              <summary>{block.heading || `Блок ${index + 1}`}</summary>
+              <label>
+                Заголовок блока
                 <input
-                  maxLength={1500}
-                  value={column}
+                  maxLength={220}
+                  value={block.heading}
                   onChange={(event) =>
-                    updateBlock(index, {
-                      columns: block.columns.map((value, position) =>
-                        position === columnIndex ? event.target.value : value,
-                      ),
-                    })
+                    updateBlock(index, { heading: event.target.value })
                   }
                 />
               </label>
-            ))}
-            {block.rows.map((row, rowIndex) => (
-              <fieldset className="admission-edit-row" key={rowIndex}>
-                <legend>Строка {rowIndex + 1}</legend>
-                {row.map((cell, columnIndex) => (
-                  <label key={columnIndex}>
-                    {block.columns[columnIndex] || `Столбец ${columnIndex + 1}`}
-                    <textarea
-                      rows={2}
-                      maxLength={1500}
-                      value={cell}
-                      onChange={(event) =>
-                        updateBlock(index, {
-                          rows: block.rows.map((cells, position) =>
-                            position === rowIndex
-                              ? cells.map((value, column) =>
-                                  column === columnIndex
-                                    ? event.target.value
-                                    : value,
-                                )
-                              : cells,
-                          ),
-                        })
-                      }
-                    />
-                  </label>
-                ))}
+              <label>
+                Текст блока
+                <textarea
+                  rows={5}
+                  maxLength={10000}
+                  value={block.text}
+                  onChange={(event) =>
+                    updateBlock(index, { text: event.target.value })
+                  }
+                />
+              </label>
+              <label>
+                Прикрепить документ
+                <select
+                  value=""
+                  onChange={(event) => {
+                    const key = event.target.value;
+                    if (key)
+                      updateBlock(index, {
+                        documents: [...block.documents, key],
+                      });
+                  }}
+                >
+                  <option value="">Выбрать документ</option>
+                  {Object.entries(documents)
+                    .filter(([key]) => !block.documents.includes(key))
+                    .map(([key, label]) => (
+                      <option key={key} value={key}>
+                        {label}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              {block.documents.map((key) => (
+                <div key={key}>
+                  {documents[key]}{" "}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateBlock(index, {
+                        documents: block.documents.filter(
+                          (item) => item !== key,
+                        ),
+                      })
+                    }
+                  >
+                    Убрать ссылку
+                  </button>
+                </div>
+              ))}
+              {block.columns.map((column, columnIndex) => (
+                <label key={columnIndex}>
+                  Название столбца {columnIndex + 1}
+                  <input
+                    maxLength={1500}
+                    value={column}
+                    onChange={(event) =>
+                      updateBlock(index, {
+                        columns: block.columns.map((value, position) =>
+                          position === columnIndex ? event.target.value : value,
+                        ),
+                      })
+                    }
+                  />
+                </label>
+              ))}
+              {block.rows.map((row, rowIndex) => (
+                <fieldset className="admission-edit-row" key={rowIndex}>
+                  <legend>Строка {rowIndex + 1}</legend>
+                  {row.map((cell, columnIndex) => (
+                    <label key={columnIndex}>
+                      {block.columns[columnIndex] ||
+                        `Столбец ${columnIndex + 1}`}
+                      <textarea
+                        rows={2}
+                        maxLength={1500}
+                        value={cell}
+                        onChange={(event) =>
+                          updateBlock(index, {
+                            rows: block.rows.map((cells, position) =>
+                              position === rowIndex
+                                ? cells.map((value, column) =>
+                                    column === columnIndex
+                                      ? event.target.value
+                                      : value,
+                                  )
+                                : cells,
+                            ),
+                          })
+                        }
+                      />
+                    </label>
+                  ))}
+                  <button
+                    type="button"
+                    aria-label={`Удалить строку ${rowIndex + 1}`}
+                    onClick={() =>
+                      updateBlock(index, {
+                        rows: block.rows.filter(
+                          (_, position) => position !== rowIndex,
+                        ),
+                      })
+                    }
+                  >
+                    Удалить строку
+                  </button>
+                </fieldset>
+              ))}
+              {block.columns.length > 0 && (
                 <button
                   type="button"
-                  aria-label={`Удалить строку ${rowIndex + 1}`}
+                  disabled={block.rows.length >= 60}
                   onClick={() =>
                     updateBlock(index, {
-                      rows: block.rows.filter(
-                        (_, position) => position !== rowIndex,
-                      ),
+                      rows: [...block.rows, block.columns.map(() => "")],
                     })
                   }
                 >
-                  Удалить строку
+                  Добавить строку
                 </button>
-              </fieldset>
-            ))}
-            {block.columns.length > 0 && (
-              <button
-                type="button"
-                disabled={block.rows.length >= 60}
-                onClick={() =>
-                  updateBlock(index, {
-                    rows: [...block.rows, block.columns.map(() => "")],
-                  })
-                }
-              >
-                Добавить строку
-              </button>
-            )}
-          </details>
-        ))}
-        <button
-          type="button"
-          disabled={draft.blocks.length >= 24}
-          onClick={() =>
-            setDraft((previous) => ({
-              ...previous,
-              blocks: [
-                ...previous.blocks,
-                { heading: "", text: "", columns: [], rows: [], documents: [] },
-              ],
-            }))
-          }
-        >
-          Добавить текстовый блок
-        </button>
-        <button type="submit" className="primary">
-          {busy ? "Сохранение…" : "Опубликовать изменения"}
-        </button>
-      </fieldset>
-      {error && <p role="alert">{error}</p>}
-      {status && <p role="status">{status}</p>}
-    </form>
+              )}
+            </details>
+          ))}
+          <button
+            type="button"
+            disabled={draft.blocks.length >= 24}
+            onClick={() =>
+              setDraft((previous) => ({
+                ...previous,
+                blocks: [
+                  ...previous.blocks,
+                  {
+                    heading: "",
+                    text: "",
+                    columns: [],
+                    rows: [],
+                    documents: [],
+                  },
+                ],
+              }))
+            }
+          >
+            Добавить текстовый блок
+          </button>
+          <button type="submit" className="primary">
+            {busy ? "Сохранение…" : "Опубликовать изменения"}
+          </button>
+        </fieldset>
+        {error && <p role="alert">{error}</p>}
+        {status && <p role="status">{status}</p>}
+      </form>
+    </div>
   );
 }
 
@@ -686,6 +734,8 @@ export function AdmissionPage({
                 saved={content.page}
                 onSave={save}
                 documents={content.documents}
+                available={content.available_documents}
+                media={content.media}
               />
               <MediaEditor
                 id={id}

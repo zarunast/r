@@ -8,7 +8,7 @@ from typing import Literal
 from zipfile import BadZipFile, ZipFile
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from sqlalchemy import func, or_, select, update
@@ -87,6 +87,7 @@ class ContractData(Input):
 class ContractPatch(Input):
     location: Literal["admissions", "applicant", "accounting", "archive"] | None = None
     stage: Literal["draft", "issued", "signed", "registered", "cancelled"] | None = None
+    paid: bool | None = None
 
 
 class CallData(Input):
@@ -97,6 +98,13 @@ class CallData(Input):
 
 class EnrollmentData(Input):
     order_number: str = Field(min_length=1, max_length=100)
+    enrolled_at: date
+
+
+class OrderDraft(Group):
+    application_ids: list[int] = Field(min_length=1, max_length=2000)
+    order_number: str = Field(min_length=1, max_length=100)
+    order_date: date
     enrolled_at: date
 
 
@@ -269,13 +277,13 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
 
     def login_as(role, form, s):
         user = authenticate(s, form.username, form.password)
-        if user is None or user.role != role:
+        if user is None or (role is not None and user.role != role):
             raise HTTPException(401, "Неверный логин или пароль для этого входа")
         return {"access_token": token_for(user, secret), "token_type": "bearer"}
 
     @app.post("/auth/token", dependencies=[Depends(local_only)])
     def login(form: OAuth2PasswordRequestForm = Depends(), s=Depends(session)):
-        return login_as("operator", form, s)
+        return login_as(None, form, s)
 
     @app.post("/auth/token/{role}", dependencies=[Depends(local_only)])
     def role_login(role: Literal["editor", "examiner"],
@@ -462,6 +470,39 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
     @app.get("/reports/statistics", dependencies=private)
     def stats(year: int, s=Depends(session)):
         return svc.statistics(s, year)
+
+    @app.get("/reports/bachelor-seat-reference", dependencies=private)
+    def bachelor_seat_reference():
+        from .admission_content import DATA
+        return FileResponse(DATA / "bachelor-seats.json", media_type="application/json")
+
+    @app.get("/reports/ranking-workbook", dependencies=private)
+    def ranking_workbook(year: int, s=Depends(session)):
+        from .web import staff_rankings
+        groups = s.execute(select(Application.direction, Application.campaign, Application.study_form)
+                           .where(Application.year == year).distinct().order_by(
+                               Application.direction, Application.campaign, Application.study_form)).all()
+        headings = ["Направление", "Кампания", "Форма обучения",
+                    "Место", "Номер ЕПГУ", "ФИО", "Баллы", "Приоритет", "Согласие"]
+        by_quota = {quota: [] for quota in svc.QUOTA_TITLES}
+        for direction, campaign, study_form in groups:
+            for quota, rows in staff_rankings(s, year, direction, campaign, study_form).items():
+                by_quota[quota].extend(dict(zip(headings, (
+                    direction, campaign, study_form,
+                    row["rank"], row["applicant_number"], row["full_name"], row["score"],
+                    row["priority"], "Да" if row["consent"] else "Нет",
+                ))) for row in rows)
+        sheets = [(svc.QUOTA_TITLES[quota], rows) for quota, rows in by_quota.items()]
+        return Response(svc.xlsx_bytes(sheets=sheets, columns=headings),
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": 'attachment; filename="ranking.xlsx"'})
+
+    @app.post("/reports/enrollment-draft", dependencies=private)
+    def enrollment_draft(body: OrderDraft, s=Depends(session)):
+        result = svc.enrollment_draft(s, body, body.application_ids, body.order_number,
+                                      body.order_date, body.enrolled_at)
+        return Response(result, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        headers={"Content-Disposition": 'attachment; filename="enrollment-draft.docx"'})
 
     @app.get("/reports/ranking", dependencies=private)
     def report(year: int, direction: str, campaign: str, study_form: str, quota: Quota,

@@ -804,3 +804,26 @@ button {
 .admission-table-wrap td a {
   overflow-wrap: anywhere;
 }
+
+.workspace-rankings-panel {
+  padding: clamp(0.75rem, 2vw, 1.5rem);
+  border: 1px solid #d7ded3;
+  border-radius: 0.75rem;
+  background: #fff;
+}
+
+.workspace-rankings-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid #d7ded3;
+}
+
+.workspace-rankings-toolbar h2 {
+  margin: 0;
+  color: #173b33;
+}

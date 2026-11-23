@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 from xml.etree.ElementTree import Element, SubElement, tostring
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from docx import Document
 from openpyxl import Workbook, load_workbook
@@ -20,6 +20,15 @@ TRANSITIONS = {
     "draft": {"issued", "cancelled"}, "issued": {"signed", "cancelled"},
     "signed": {"registered", "cancelled"}, "registered": {"cancelled"}, "cancelled": set(),
 }
+
+
+def moscow_today():
+    try:
+        zone = ZoneInfo("Europe/Moscow")
+    except ZoneInfoNotFoundError:
+        # Современные кампании используют UTC+3 даже без системной базы IANA.
+        zone = timezone(timedelta(hours=3))
+    return datetime.now(zone).date()
 
 
 def require(session, model, key):
@@ -149,7 +158,7 @@ def reconcile_payments(session, file, actor):
 
 
 def call_queue(session, year, change_deadline, payment_deadline, today=None):
-    today = today or datetime.now(ZoneInfo("Europe/Moscow")).date()
+    today = today or moscow_today()
     reasons = []
     if change_deadline - timedelta(days=7) <= today <= change_deadline:
         reasons.append("direction_deadline")
@@ -200,20 +209,82 @@ def statistics(session, year):
                         if (d, c, f, q) in plans else None} for d, c, f, q, count in groups]}
 
 
-def xlsx_bytes(rows):
-    workbook = Workbook()
-    ws = workbook.active
-    ws.title = "Отчёт"
+def xlsx_bytes(rows=None, *, sheets=None, columns=None):
+    workbook = Workbook(write_only=True)
     def safe(value):
         # Запрещаем формулы из внешнего Excel в экспортируемых строках.
         return "'" + value if isinstance(value, str) and value.startswith(("=", "+", "-", "@")) else value
-    if rows:
-        columns = list(rows[0])
-        ws.append(columns)
-        for row in rows:
-            ws.append([safe(row.get(k)) for k in columns])
+
+    for title, values in (sheets if sheets is not None else [("Отчёт", rows)]):
+        sheet = workbook.create_sheet(title)
+        headers = columns if columns is not None else list(values[0]) if values else []
+        if headers:
+            sheet.append(headers)
+            for row in values:
+                sheet.append([safe(row.get(key)) for key in headers])
     out = io.BytesIO()
     workbook.save(out)
+    return out.getvalue()
+
+
+QUOTA_TITLES = {
+    "general": "Основной конкурс", "special": "Особая квота",
+    "separate": "Отдельная квота", "target": "Целевая квота", "paid": "Платное обучение",
+}
+
+
+def enrollment_draft(session, group, ids, number, order_date, enrolled_at):
+    conditions = {key: getattr(group, key) for key in ("year", "direction", "campaign", "study_form")}
+    quota = group.quota.value
+    plan = session.scalar(select(SeatPlan).filter_by(**conditions, quota=quota))
+    if plan is None:
+        raise ValueError("Сначала укажите количество мест для этой категории")
+    candidates = session.scalars(group_query(**conditions, quota=quota).where(
+        Application.id.in_(ids), Application.status.in_(("participating", "accepted")),
+    ).order_by(Application.total_score.desc(), Application.applicant_number)).all()
+    if len(candidates) != len(set(ids)):
+        raise ValueError("Выберите действующие заявления из одного конкурсного списка")
+    if len(candidates) != len({item.applicant_number for item in candidates}):
+        raise ValueError("У одного абитуриента несколько выбранных заявлений")
+    used = session.scalar(select(func.count()).select_from(group_query(**conditions, quota=quota).where(
+        Application.status == "enrolled").subquery()))
+    if len(candidates) + used > plan.seats:
+        raise ValueError("Выбрано больше заявлений, чем осталось мест")
+    already = session.scalar(select(Application.id).where(
+        Application.year == group.year, Application.campaign == group.campaign,
+        Application.applicant_number.in_([item.applicant_number for item in candidates]),
+        Application.status == "enrolled").limit(1))
+    if already is not None:
+        raise ValueError("Среди выбранных есть уже зачисленный абитуриент этой кампании")
+    if quota == "paid":
+        paid = set(session.scalars(select(Contract.application_id).where(
+            Contract.application_id.in_(ids), Contract.paid.is_(True), Contract.stage == "registered")))
+        if any(item.id not in paid for item in candidates):
+            raise ValueError("Для платного зачисления нужны зарегистрированные оплаченные договоры")
+    elif any(not item.consent for item in candidates):
+        raise ValueError("Для бюджетного зачисления требуется согласие каждого абитуриента")
+
+    doc = Document()
+    doc.add_paragraph("БРЯНСКИЙ ГОСУДАРСТВЕННЫЙ ТЕХНИЧЕСКИЙ УНИВЕРСИТЕТ")
+    doc.add_heading("ПРОЕКТ ПРИКАЗА", 0)
+    doc.add_paragraph(f"{order_date:%d.%m.%Y} · г. Брянск · № {number}")
+    doc.add_heading("О зачислении на первый курс", level=1)
+    doc.add_paragraph("Основание: решение приёмной комиссии, протокол № ____ от __________.")
+    doc.add_paragraph("ПРИКАЗЫВАЮ:")
+    doc.add_paragraph(f"Зачислить с {enrolled_at:%d.%m.%Y} абитуриентов, указанных в приложении. "
+                      f"{group.campaign} · {group.direction} · {group.study_form} · {QUOTA_TITLES[quota]}.")
+    doc.add_paragraph("Ректор ____________________")
+    doc.add_page_break()
+    doc.add_heading(f"Приложение к проекту приказа № {number}", level=1)
+    table = doc.add_table(rows=1, cols=3)
+    table.style = "Table Grid"
+    for cell, label in zip(table.rows[0].cells, ("№", "Идентификатор абитуриента", "Конкурсные баллы")):
+        cell.text = label
+    for position, item in enumerate(candidates, 1):
+        for cell, value in zip(table.add_row().cells, (position, item.applicant_number, item.total_score)):
+            cell.text = str(value)
+    out = io.BytesIO()
+    doc.save(out)
     return out.getvalue()
 
 

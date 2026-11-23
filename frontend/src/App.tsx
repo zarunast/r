@@ -43,7 +43,7 @@ import { Login } from "./pages/Login";
 import { RoleWorkspace } from "./pages/RoleWorkspace";
 
 const navigation: { id: Page; label: string; icon: LucideIcon }[] = [
-  { id: "dashboard", label: "Дашборд", icon: LayoutDashboard },
+  { id: "dashboard", label: "Главное", icon: LayoutDashboard },
   { id: "registry", label: "Реестр", icon: Users },
   { id: "rankings", label: "Рейтинги", icon: ChartColumn },
   { id: "contracts", label: "Договоры", icon: FileText },
@@ -142,14 +142,6 @@ function OperatorWorkspace() {
     activity: "Журнал активности",
   };
   const importEpgu = () => setImportKind("epgu");
-  const loginRole =
-    route === "login"
-      ? "operator"
-      : route === "login/editor"
-        ? "editor"
-        : route === "login/examiner"
-          ? "examiner"
-          : null;
   const content =
     route === "dashboard" ? (
       <Dashboard onImport={importEpgu} callCount={calls.data?.length} />
@@ -176,14 +168,14 @@ function OperatorWorkspace() {
         <h1>Страница не найдена</h1>
         <p>Выберите раздел в боковом меню.</p>
         <a href="#/dashboard" className="button primary">
-          На дашборд
+          На главную
         </a>
       </div>
     );
   return (
     <>
-      {loginRole ? (
-        <Login key={loginRole} role={loginRole} />
+      {route === "login" || route.startsWith("login/") ? (
+        <Login />
       ) : (
         <div className="app-shell">
           {mobile && (

@@ -1,7 +1,6 @@
 """Служебные представления для внутреннего сайта. Все данные доступны только после входа."""
 from datetime import datetime, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from fastapi import Depends, Query
 from fastapi.responses import FileResponse
@@ -49,12 +48,24 @@ def record_activity(session, request):
     session.add(ActivityEvent(actor=actor, action=action, object=target))
 
 
+def staff_rankings(s, year, direction, campaign, study_form):
+    public = svc.all_rankings(s, year, direction, campaign, study_form)
+    people = {(a.applicant_number, a.quota): (a, p) for a, p in s.execute(
+        svc.group_query(year, direction, campaign, study_form).add_columns(Applicant).join(Applicant))}
+    for quota, rows in public.items():
+        for row in rows:
+            a, p = people[(row["applicant_number"], quota)]
+            row.update(application_id=a.id, full_name=" ".join(filter(None, [p.surname, p.first_name, p.patronymic])),
+                       consent=a.consent, priority=a.priority, status=a.status)
+    return public
+
+
 def attach_web(app, db, session, staff, local_only):
     private = [Depends(staff)]
 
     @app.get("/dashboard", dependencies=private)
     def dashboard(year: int = Query(ge=2000, le=2100), s=Depends(session)):
-        today = datetime.now(ZoneInfo("Europe/Moscow")).date()
+        today = svc.moscow_today()
         stats = svc.statistics(s, year)
         received_date = func.substr(Application.source["Дата получения документов"].as_string(), 1, 10)
         today_count = s.scalar(select(func.count()).select_from(Application).where(
@@ -103,14 +114,7 @@ def attach_web(app, db, session, staff, local_only):
 
     @app.get("/rankings", dependencies=private)
     def rankings(year: int, direction: str, campaign: str, study_form: str, s=Depends(session)):
-        public = svc.all_rankings(s, year, direction, campaign, study_form)
-        people = {(a.applicant_number, a.quota): (a, p) for a, p in s.execute(
-            svc.group_query(year, direction, campaign, study_form).add_columns(Applicant).join(Applicant))}
-        for quota, rows in public.items():
-            for row in rows:
-                a, p = people[(row["applicant_number"], quota)]
-                row.update(application_id=a.id, full_name=" ".join(filter(None, [p.surname, p.first_name, p.patronymic])),
-                           consent=a.consent, priority=a.priority, status=a.status)
+        public = staff_rankings(s, year, direction, campaign, study_form)
         plans = {p.quota: p.seats for p in s.scalars(select(SeatPlan).where(SeatPlan.year == year,
                  SeatPlan.direction == direction, SeatPlan.campaign == campaign, SeatPlan.study_form == study_form))}
         return {"lists": public, "seats": plans}
