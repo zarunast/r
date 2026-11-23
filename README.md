@@ -13,6 +13,34 @@
 
 ## Запуск
 
+### Windows
+
+Распакуйте ZIP из GitHub. Откройте PowerShell в папке с `requirements.txt`.
+Установите Python 3.12 и Node.js 22.12 или новее, затем выполните:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+cd frontend
+npm.cmd ci
+npm.cmd run build
+cd ..
+$env:JWT_SECRET = (.\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(48))")
+.\.venv\Scripts\python.exe -m uvicorn admissions.api:create_app --factory --host 127.0.0.1 --port 8000 --no-proxy-headers
+```
+
+Оставьте PowerShell открытым. Портал абитуриента доступен по адресу
+http://127.0.0.1:8000/abiturient/workspace/. Для создания учётных записей
+откройте второе окно в той же папке:
+
+```powershell
+.\.venv\Scripts\python.exe -m admissions create-user secretary
+.\.venv\Scripts\python.exe -m admissions create-user editor --role editor
+.\.venv\Scripts\python.exe -m admissions create-user teacher --role examiner
+```
+
+### Linux и macOS
+
 ```bash
 cd /workspace/r
 python -m venv .venv
@@ -157,13 +185,16 @@ SQLite сам по себе не шифрует персональные дан�
 доступа из локальной сети укажите `INTERNAL_NETWORKS`, например `10.20.0.0/16,127.0.0.0/8`.
 При размещении за Nginx обязательно ограничьте служебные пути сетью вуза **на Nginx**:
 backend увидит адрес самого прокси. Для открытого портала разрешайте только `/public/`,
-страницу `/abiturient/`, `/assets/` и favicon; не публикуйте целиком upstream.
+страницы `/abiturient/` и `/abiturient/workspace/`, `/assets/` и favicon. Остальные
+пути обслуживайте в локальной сети вуза.
 Пример фрагмента (замените подсеть реальной):
 
 ```nginx
 client_max_body_size 25m;
 location = /abiturient { return 301 /abiturient/; }
 location = /abiturient/ { proxy_pass http://127.0.0.1:8000; }
+location = /abiturient/workspace { return 301 /abiturient/workspace/; }
+location = /abiturient/workspace/ { proxy_pass http://127.0.0.1:8000; }
 location /assets/ { proxy_pass http://127.0.0.1:8000; }
 location = /favicon.svg { proxy_pass http://127.0.0.1:8000; }
 location /public/ {
@@ -173,6 +204,7 @@ location /public/ {
 location / {
     allow 10.20.0.0/16;
     deny all;
+    client_max_body_size 70m;
     proxy_pass http://127.0.0.1:8000;
 }
 ```
@@ -236,3 +268,27 @@ API, сохраните текущую БД и её WAL/SHM, проверьте 
 `Contract 1—N ContractEvent`, `Application 1—N Call`. `SeatPlan` относится к полному
 ключу конкурса, `User` хранит только хеш пароля и статус доступа. Год хранится в
 заявлении, поэтому история нескольких приёмных кампаний не перезаписывается.
+
+### Редактор и проверяющий экзамены
+
+Создайте отдельные локальные учётные записи для сотрудников. Команда запрашивает
+пароль интерактивно.
+
+```bash
+.venv/bin/python -m admissions create-user site-editor --role editor
+.venv/bin/python -m admissions create-user exam-reviewer --role examiner
+```
+
+Редактор входит через `/#/login/editor`, преподаватель через `/#/login/examiner`.
+Редактор выбирает страницу и публикует
+изменения. Проверяющий ищет абитуриента по ФИО, выбирает заявление, вводит
+баллы от 0 до 100 и отмечает экзамены для конкурсной суммы. Ранее сохранённые
+альтернативные результаты сохраняются в карточке. Сумма включает баллы за
+индивидуальные достижения. Существующие учётные записи получают роль оператора.
+
+### Нейропомощник абитуриента
+
+Задайте `OPENAI_API_KEY` в окружении серверного процесса. При необходимости
+переопределите `OPENAI_MODEL` (по умолчанию `gpt-4o-mini`). Помощник отправляет
+в OpenAI сам вопрос и релевантные фрагменты опубликованных страниц БГТУ.
+Данные реестра он не читает. Без ключа чат показывает ответы из справочника.

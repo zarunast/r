@@ -7,7 +7,13 @@ export type Page =
   | "reports"
   | "activity";
 export type Quota = "general" | "special" | "separate" | "target" | "paid";
-export type User = { login: string; display_name: string; role: string };
+export type StaffRole = "operator" | "editor" | "examiner";
+export type User = {
+  login: string;
+  display_name: string;
+  role: string;
+  role_id?: StaffRole;
+};
 export type Group = { direction: string; campaign: string; study_form: string };
 export type DashboardData = {
   date: string;

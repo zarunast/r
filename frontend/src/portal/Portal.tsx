@@ -55,7 +55,7 @@ function UniversityMark({ inverse = false }: { inverse?: boolean }) {
 }
 
 export default function Portal() {
-  const { demo, setDemo, year, setYear } = usePortal();
+  const { api, demo, setDemo, year, setYear } = usePortal();
   const [menu, setMenu] = useState(false);
   const [contrast, setContrast] = useState(false);
   const [active, setActive] = useState(window.location.hash.slice(1) || "home");
@@ -274,8 +274,8 @@ export default function Portal() {
             <ShieldCheck size={13} />
             Персональные данные в открытых списках не публикуются
           </span>
-          <a href="/#/login">
-            Вход для сотрудников
+          <a href="/abiturient/workspace/">
+            Правила приёма и студенческая жизнь
             <ArrowUpRight size={12} />
           </a>
         </div>
@@ -283,6 +283,15 @@ export default function Portal() {
       <Assistant
         open={chat}
         setOpen={setChat}
+        demo={demo}
+        ask={
+          demo
+            ? (question) =>
+                api<{ answer: string }>(
+                  `/public/faq?question=${encodeURIComponent(question)}`,
+                )
+            : undefined
+        }
         key={demo ? "demo-assistant" : "live-assistant"}
       />
     </div>

@@ -100,6 +100,7 @@ class User(Base):
     login: Mapped[str] = mapped_column(unique=True)
     password_hash: Mapped[str]
     active: Mapped[bool] = mapped_column(default=True)
+    role: Mapped[str] = mapped_column(default="operator", server_default="operator")
 
 
 class ActivityEvent(Base):

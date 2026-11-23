@@ -7,18 +7,48 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
-import { usePortal } from "./state";
+import "./assistant.css";
 import { official } from "./types";
 
-type Message = { id: number; who: "user" | "assistant"; text: string };
+type Source = { title: string; href: string };
+type Answer = { answer: string; sources?: Source[] };
+type Message = {
+  id: number;
+  who: "user" | "assistant";
+  text: string;
+  sources?: Source[];
+};
+
+export async function askPublicAssistant(question: string): Promise<Answer> {
+  const api = import.meta.env.DEV ? "/api" : "";
+  const response = await fetch(api + "/public/assistant", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+  if (response.ok) return response.json();
+  if (response.status === 503) {
+    const faq = await fetch(
+      api + "/public/faq?question=" + encodeURIComponent(question),
+    );
+    if (faq.ok) {
+      const answer = (await faq.json()) as Answer;
+      return { answer: "Ответ из справочника. " + answer.answer };
+    }
+  }
+  throw new Error("Помощник недоступен");
+}
 export function Assistant({
   open,
   setOpen,
+  demo = false,
+  ask = askPublicAssistant,
 }: {
   open: boolean;
   setOpen: (open: boolean) => void;
+  demo?: boolean;
+  ask?: (question: string) => Promise<Answer>;
 }) {
-  const { api, demo } = usePortal();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 0,
@@ -64,13 +94,16 @@ export function Assistant({
     setText("");
     setBusy(true);
     try {
-      const answer = await api<{ answer: string }>(
-        `/public/faq?question=${encodeURIComponent(value)}`,
-      );
+      const answer = await ask(value);
       if (mounted.current)
         setMessages((m) => [
           ...m,
-          { id: Date.now(), who: "assistant", text: answer.answer },
+          {
+            id: Date.now(),
+            who: "assistant",
+            text: answer.answer,
+            sources: answer.sources,
+          },
         ]);
     } catch {
       if (mounted.current)
@@ -119,7 +152,7 @@ export function Assistant({
               <h2>Помощник абитуриента</h2>
               <p>
                 <span />
-                БГТУ · {demo ? "демонстрация" : "ответы на частые вопросы"}
+                БГТУ · {demo ? "демонстрация" : "вопросы о поступлении"}
               </p>
             </div>
             <button
@@ -143,6 +176,15 @@ export function Assistant({
                   <span className="p-chat-message-label">БГТУ</span>
                 )}
                 <p>{message.text}</p>
+                {!!message.sources?.length && (
+                  <ul className="p-chat-sources">
+                    {message.sources.map((source) => (
+                      <li key={source.href}>
+                        <a href={source.href}>{source.title}</a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             ))}
             {busy && (

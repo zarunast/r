@@ -35,8 +35,13 @@ def record_activity(session, request):
         action, target = "Внесён приказ о зачислении", "Зачисление"
     elif path.startswith("/applications"):
         action, target = ("Добавлено заявление" if request.method == "POST" else "Обновлено заявление"), "Заявления"
+    elif path.startswith("/exam-review/applications/"):
+        action, target = "Внесены экзаменационные баллы", path.split("/")[3]
     elif path.startswith("/seat-plans"):
         action, target = "Обновлен план приёма", "Конкурсные списки"
+    elif path.startswith("/admission-content/"):
+        action = "Заменён PDF" if path.startswith("/admission-content/documents/") else "Обновлена страница приёма"
+        target = path.rsplit("/", 1)[-1]
     elif path.startswith("/calls"):
         action, target = "Сохранён результат звонка", "Список обзвона"
     else:
@@ -44,12 +49,8 @@ def record_activity(session, request):
     session.add(ActivityEvent(actor=actor, action=action, object=target))
 
 
-def attach_web(app, db, session, staff):
+def attach_web(app, db, session, staff, local_only):
     private = [Depends(staff)]
-
-    @app.get("/auth/me", dependencies=private)
-    def me(user=Depends(staff)):
-        return {"id": user.id, "login": user.login, "display_name": user.login, "role": "Сотрудник приёмной комиссии"}
 
     @app.get("/dashboard", dependencies=private)
     def dashboard(year: int = Query(ge=2000, le=2100), s=Depends(session)):
@@ -139,7 +140,7 @@ def attach_web(app, db, session, staff):
     if (dist / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=dist / "assets"), name="web-assets")
 
-        @app.get("/", include_in_schema=False)
+        @app.get("/", include_in_schema=False, dependencies=[Depends(local_only)])
         def site():
             return FileResponse(dist / "index.html")
 
@@ -152,3 +153,9 @@ def attach_web(app, db, session, staff):
             @app.get("/abiturient", include_in_schema=False)
             def applicant_site():
                 return FileResponse(dist / "abiturient.html")
+
+        if (dist / "abiturient-workspace.html").exists():
+            @app.get("/abiturient/workspace/", include_in_schema=False)
+            @app.get("/abiturient/workspace", include_in_schema=False)
+            def applicant_workspace():
+                return FileResponse(dist / "abiturient-workspace.html")

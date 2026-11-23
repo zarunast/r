@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .db import Database
 from .importer import import_epgu
-from .security import add_user
+from .security import ROLES, add_user
 from .services import backup_database
 
 
@@ -17,6 +17,7 @@ def main():
     commands.add_parser("init-db")
     user = commands.add_parser("create-user")
     user.add_argument("login")
+    user.add_argument("--role", choices=ROLES, default="operator")
     importer = commands.add_parser("import-epgu")
     importer.add_argument("file", type=Path)
     importer.add_argument("--year", type=int, required=True)
@@ -32,7 +33,7 @@ def main():
             if password != getpass.getpass("Повтор пароля: "):
                 parser.error("Пароли не совпадают")
             with db.uow() as session:
-                add_user(session, args.login, password)
+                add_user(session, args.login, password, args.role)
             print("Пользователь создан")
         elif args.command == "import-epgu":
             report = import_epgu(db, args.file, args.year, args.sheet)

@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { demoRequest, demoUser } from "./demo";
-import type { User } from "./types";
+import type { StaffRole, User } from "./types";
 
 const API_BASE = import.meta.env.DEV ? "/api" : "";
 type Notice = { id: number; message: string; kind: "success" | "error" };
@@ -16,6 +16,7 @@ type CampaignDates = { change: string; payment: string };
 type Context = {
   demo: boolean;
   user: User;
+  token: string | null;
   year: number;
   setYear: (year: number) => void;
   dates: CampaignDates;
@@ -27,7 +28,7 @@ type Context = {
     filename: string,
     options?: RequestInit,
   ) => Promise<void>;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string, role: StaffRole) => Promise<void>;
   logout: () => void;
   refresh: () => void;
   notify: (message: string, kind?: Notice["kind"]) => void;
@@ -133,13 +134,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       if (response.status === 401 && token) {
         logout();
-        window.location.hash = "/login";
+        window.location.hash =
+          user.role_id && user.role_id !== "operator"
+            ? "/login/" + user.role_id
+            : "/login";
         throw new Error("Сессия завершена. Войдите снова.");
       }
       if (!response.ok) throw new Error(await responseError(response));
       return response;
     },
-    [token, logout],
+    [token, logout, user.role_id],
   );
   const api = useCallback(
     async <T,>(path: string, options?: RequestInit): Promise<T> => {
@@ -157,28 +161,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     [token, fetchApi],
   );
-  const login = useCallback(async (username: string, password: string) => {
-    const response = await fetch(API_BASE + "/auth/token", {
-      method: "POST",
-      body: new URLSearchParams({ username, password }),
-    }).catch(() => {
-      throw new Error("Сервер недоступен. Проверьте запуск Python API.");
-    });
-    if (!response.ok) throw new Error(await responseError(response));
-    const data = (await response.json()) as { access_token: string };
-    const me = await fetch(API_BASE + "/auth/me", {
-      headers: { Authorization: `Bearer ${data.access_token}` },
-    });
-    if (!me.ok) throw new Error(await responseError(me));
-    setUser((await me.json()) as User);
-    setToken(data.access_token);
-    setRevision((n) => n + 1);
-  }, []);
+  const login = useCallback(
+    async (username: string, password: string, role: StaffRole) => {
+      const path = role === "operator" ? "/auth/token" : "/auth/token/" + role;
+      const response = await fetch(API_BASE + path, {
+        method: "POST",
+        body: new URLSearchParams({ username, password }),
+      }).catch(() => {
+        throw new Error("Сервер недоступен. Проверьте запуск Python API.");
+      });
+      if (!response.ok) throw new Error(await responseError(response));
+      const data = (await response.json()) as { access_token: string };
+      const me = await fetch(API_BASE + "/auth/me", {
+        headers: { Authorization: `Bearer ${data.access_token}` },
+      });
+      if (!me.ok) throw new Error(await responseError(me));
+      setUser((await me.json()) as User);
+      setToken(data.access_token);
+      setRevision((n) => n + 1);
+    },
+    [],
+  );
   const refresh = useCallback(() => setRevision((n) => n + 1), []);
   const value = useMemo(
     () => ({
       demo: !token,
       user,
+      token,
       year,
       setYear,
       dates,

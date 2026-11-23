@@ -34,8 +34,13 @@ class Database:
         self.sessions = sessionmaker(self.engine, expire_on_commit=False)
 
     def create_schema(self):
-        from . import models  # noqa: F401
+        from . import admission_content, models  # noqa: F401
         Base.metadata.create_all(self.engine)
+        with self.engine.begin() as connection:
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            columns = connection.exec_driver_sql("PRAGMA table_info(users)").all()
+            if not any(column[1] == "role" for column in columns):
+                connection.exec_driver_sql("ALTER TABLE users ADD COLUMN role VARCHAR NOT NULL DEFAULT 'operator'")
 
     @contextmanager
     def uow(self):

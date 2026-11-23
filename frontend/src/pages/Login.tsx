@@ -9,8 +9,23 @@ import {
 } from "lucide-react";
 import { useStore } from "../store";
 import { ErrorState } from "../components/ui";
+import type { StaffRole } from "../types";
 
-export function Login() {
+const entries = [
+  {
+    role: "operator",
+    route: "#/login",
+    label: "Вход сотрудника приёмной комиссии",
+  },
+  {
+    role: "editor",
+    route: "#/login/editor",
+    label: "Вход редактора сайта абитуриента",
+  },
+  { role: "examiner", route: "#/login/examiner", label: "Вход преподавателя" },
+];
+
+export function Login({ role }: { role: StaffRole }) {
   const { login, notify } = useStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -68,8 +83,8 @@ export function Login() {
           <span className="login-lock">
             <LockKeyhole size={24} />
           </span>
-          <h2>Добро пожаловать</h2>
-          <p>Войдите в рабочее пространство приёмной комиссии</p>
+          <h2>{entries.find((entry) => entry.role === role)?.label}</h2>
+          {role === "examiner" && <p>Проверка экзаменов и внесение баллов</p>}
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -80,8 +95,10 @@ export function Login() {
                 await login(
                   String(f.get("username")),
                   String(f.get("password")),
+                  role,
                 );
-                window.location.hash = "/dashboard";
+                window.location.hash =
+                  role === "operator" ? "/dashboard" : "/" + role;
                 notify("Вы вошли в рабочую базу");
               } catch (err) {
                 setError((err as Error).message);
@@ -130,6 +147,15 @@ export function Login() {
               <ArrowRight size={18} />
             </button>
           </form>
+          <nav className="login-role-links" aria-label="Другие варианты входа">
+            {entries
+              .filter((entry) => entry.role !== role)
+              .map((entry) => (
+                <a key={entry.role} href={entry.route}>
+                  {entry.label}
+                </a>
+              ))}
+          </nav>
           <div className="login-support">
             <ShieldCheck size={17} />
             <p>

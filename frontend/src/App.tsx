@@ -40,6 +40,7 @@ import { Contracts } from "./pages/Contracts";
 import { Calls } from "./pages/Calls";
 import { Reports } from "./pages/Reports";
 import { Login } from "./pages/Login";
+import { RoleWorkspace } from "./pages/RoleWorkspace";
 
 const navigation: { id: Page; label: string; icon: LucideIcon }[] = [
   { id: "dashboard", label: "Дашборд", icon: LayoutDashboard },
@@ -51,6 +52,15 @@ const navigation: { id: Page; label: string; icon: LucideIcon }[] = [
 ];
 
 export default function App() {
+  const { user } = useStore();
+  return user.role_id === "editor" || user.role_id === "examiner" ? (
+    <RoleWorkspace key={user.login} />
+  ) : (
+    <OperatorWorkspace />
+  );
+}
+
+function OperatorWorkspace() {
   const { demo, user, year, setYear, logout, notices, api, dates } = useStore();
   const [route, setRoute] = useState(
     window.location.hash.replace("#/", "") || "dashboard",
@@ -132,6 +142,14 @@ export default function App() {
     activity: "Журнал активности",
   };
   const importEpgu = () => setImportKind("epgu");
+  const loginRole =
+    route === "login"
+      ? "operator"
+      : route === "login/editor"
+        ? "editor"
+        : route === "login/examiner"
+          ? "examiner"
+          : null;
   const content =
     route === "dashboard" ? (
       <Dashboard onImport={importEpgu} callCount={calls.data?.length} />
@@ -164,8 +182,8 @@ export default function App() {
     );
   return (
     <>
-      {route === "login" ? (
-        <Login />
+      {loginRole ? (
+        <Login key={loginRole} role={loginRole} />
       ) : (
         <div className="app-shell">
           {mobile && (

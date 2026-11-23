@@ -10,14 +10,14 @@ from zipfile import BadZipFile, ZipFile
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import or_, select
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from .db import Database
 from .importer import import_epgu
 from .models import Applicant, Application, Call, Contract, ContractEvent, Quota, SeatPlan, User, now
-from .security import authenticate, decode_token, token_for
+from .security import ROLES, authenticate, decode_token, token_for
 from . import services as svc
 
 
@@ -62,6 +62,12 @@ class ApplicationPatch(Input):
     consent: bool | None = None
     exam_scores: dict[str, int] | None = None
     achievements: int | None = Field(default=None, ge=0, le=100)
+
+
+class ExamResult(Input):
+    exam_scores: dict[str, StrictInt] = Field(min_length=1, max_length=20)
+    previous_scores: dict[str, int]
+    previous_total: int
 
 
 class RegistrationData(Input):
@@ -159,6 +165,11 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
 
     @app.middleware("http")
     async def security_headers(request, call_next):
+        if request.url.path in {"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}:
+            try:
+                local_only(request)
+            except HTTPException as error:
+                return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "no-store"
@@ -178,7 +189,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         if not any(address in n for n in networks):
             raise HTTPException(403, "Доступ только из сети приёмной комиссии")
 
-    def staff(request: Request, token=Depends(oauth), s=Depends(session), _=Depends(local_only)):
+    def signed_in(request: Request, token=Depends(oauth), s=Depends(session), _=Depends(local_only)):
         try:
             user_id = decode_token(token, secret)
         except ValueError:
@@ -189,19 +200,87 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         request.state.actor = user.login
         return user
 
+    def access(*roles):
+        def require_role(user=Depends(signed_in)):
+            if user.role not in roles:
+                raise HTTPException(403, "Недостаточно прав для этой операции")
+            return user
+        return require_role
+
+    staff = access("operator")
     private = [Depends(staff)]
 
+    @app.get("/auth/me")
+    def me(user=Depends(signed_in)):
+        return {"id": user.id, "login": user.login, "display_name": user.login,
+                "role": ROLES[user.role], "role_id": user.role}
+
+    examiner = [Depends(access("examiner"))]
+
+    @app.get("/exam-review/applicants", dependencies=examiner)
+    def exam_applicants(q: str = Query(min_length=2, max_length=200), s=Depends(session)):
+        name = func.trim(Applicant.surname + " " + Applicant.first_name + " " + Applicant.patronymic)
+        terms = q.lower().replace("ё", "е").split()
+        if not terms:
+            return []
+        matches = select(Applicant).where(*(func.replace(func.lower(name), "ё", "е").contains(
+            term, autoescape=True) for term in terms))
+        return [{"number": p.number, "name": " ".join(filter(None, [p.surname, p.first_name, p.patronymic]))}
+                for p in s.scalars(matches.order_by(Applicant.surname, Applicant.first_name, Applicant.number).limit(50))]
+
+    @app.get("/exam-review/applicants/{number}", dependencies=examiner)
+    def exam_applicant(number: str, s=Depends(session)):
+        person = svc.require(s, Applicant, number)
+        applications = s.scalars(select(Application).where(Application.applicant_number == number)
+                                 .order_by(Application.year.desc(), Application.id))
+        return {
+            "number": person.number,
+            "name": " ".join(filter(None, [person.surname, person.first_name, person.patronymic])),
+            "applications": [{key: value for key, value in model_dict(item).items() if key in {
+                "id", "year", "campaign", "direction", "study_form", "quota",
+                "exams", "total_score", "achievements", "enrolled_at",
+            }} for item in applications],
+        }
+
+    @app.put("/exam-review/applications/{application_id}/scores", dependencies=examiner)
+    def save_exam_result(application_id: int, body: ExamResult, s=Depends(session)):
+        item = svc.require(s, Application, application_id)
+        if item.enrolled_at:
+            raise HTTPException(409, "Заявление уже зачислено")
+        exams = {name.strip(): score for name, score in body.exam_scores.items()}
+        if len(exams) != len(body.exam_scores) or any(not name or len(name) > 120 for name in exams):
+            raise ValueError("Укажите разные названия экзаменов длиной до 120 символов")
+        total = score_values(exams, item.achievements)
+        recorded = {**item.exams, **exams}
+        if item.exams != body.previous_scores or item.total_score != body.previous_total:
+            raise HTTPException(409, "Баллы уже изменены. Откройте карточку повторно.")
+        result = s.execute(update(Application).where(
+            Application.id == item.id, Application.exams == item.exams,
+            Application.total_score == item.total_score, Application.achievements == item.achievements,
+            Application.enrolled_at.is_(None),
+        ).values(exams=recorded, total_score=total))
+        if result.rowcount != 1:
+            raise HTTPException(409, "Заявление уже изменено. Откройте карточку повторно.")
+        return {"exams": recorded, "total_score": total}
     @app.get("/health")
     def health(s=Depends(session)):
         s.execute(select(1))
         return {"status": "ok"}
 
+    def login_as(role, form, s):
+        user = authenticate(s, form.username, form.password)
+        if user is None or user.role != role:
+            raise HTTPException(401, "Неверный логин или пароль для этого входа")
+        return {"access_token": token_for(user, secret), "token_type": "bearer"}
+
     @app.post("/auth/token", dependencies=[Depends(local_only)])
     def login(form: OAuth2PasswordRequestForm = Depends(), s=Depends(session)):
-        user = authenticate(s, form.username, form.password)
-        if user is None:
-            raise HTTPException(401, "Неверный логин или пароль")
-        return {"access_token": token_for(user, secret), "token_type": "bearer"}
+        return login_as("operator", form, s)
+
+    @app.post("/auth/token/{role}", dependencies=[Depends(local_only)])
+    def role_login(role: Literal["editor", "examiner"],
+                   form: OAuth2PasswordRequestForm = Depends(), s=Depends(session)):
+        return login_as(role, form, s)
 
     @app.post("/imports/epgu", dependencies=private)
     def epgu(year: int = Query(ge=2000, le=2100), sheet: str | None = None, file: UploadFile = File()):
@@ -405,7 +484,11 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         return Response(svc.export_1c(s, year, format), media_type="application/json" if format == "json" else "application/xml")
 
     from .web import attach_web
-    attach_web(app, db, session, staff)
+    attach_web(app, db, session, staff, local_only)
     from .portal import attach_portal
     attach_portal(app, session)
+    from .admission_content import attach_admission_content
+    attach_admission_content(app, session, access("operator", "editor"))
+    from .assistant import attach_assistant
+    attach_assistant(app, session)
     return app

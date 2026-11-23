@@ -9,6 +9,11 @@ from .models import User
 
 
 passwords = CryptContext(schemes=["bcrypt"], deprecated="auto")
+ROLES = {
+    "operator": "Сотрудник приёмной комиссии",
+    "editor": "Редактор сайта абитуриента",
+    "examiner": "Проверяющий экзамены",
+}
 
 
 def validate_password(password):
@@ -16,13 +21,15 @@ def validate_password(password):
         raise ValueError("Пароль должен содержать от 10 символов до 72 байт UTF-8")
 
 
-def add_user(session, login, password):
+def add_user(session, login, password, role="operator"):
     validate_password(password)
+    if role not in ROLES:
+        raise ValueError("Неизвестная роль")
     if not login.strip() or len(login) > 100:
         raise ValueError("Некорректный логин")
     if session.scalar(select(User).where(User.login == login)):
         raise ValueError("Пользователь уже существует")
-    user = User(login=login, password_hash=passwords.hash(password))
+    user = User(login=login, password_hash=passwords.hash(password), role=role)
     session.add(user)
     return user
 

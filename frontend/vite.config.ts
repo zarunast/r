@@ -5,7 +5,11 @@ export default defineConfig({
   plugins: [react()],
   build: {
     rollupOptions: {
-      input: { staff: "index.html", applicant: "abiturient.html" },
+      input: {
+        staff: "index.html",
+        applicant: "abiturient.html",
+        applicantWorkspace: "abiturient-workspace.html",
+      },
     },
   },
   server: {
