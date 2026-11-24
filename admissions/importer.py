@@ -235,6 +235,12 @@ def import_epgu(db, path, year, sheet=None):
                     report.updated_applications += 1
                 else:
                     report.unchanged_applications += 1
+        if year == 2026 and parsed:
+            from .seat_reference import seed_seat_plans
+            session.flush()
+            seeded = seed_seat_plans(session, year)
+            if seeded:
+                report.warnings.append(f"Добавлено позиций плана приёма БГТУ: {seeded}.")
         report.new_applicants = len(fresh)
         report.updated_applicants = len(updated - fresh)
     return report

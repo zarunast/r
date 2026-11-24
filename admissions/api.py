@@ -1,11 +1,12 @@
 from contextlib import asynccontextmanager, contextmanager
 from datetime import date, datetime, timezone
+import io
 import ipaddress
 import os
 from pathlib import Path
 import tempfile
 from typing import Literal
-from zipfile import BadZipFile, ZipFile
+from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -15,6 +16,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from .db import Database
+from .exam_policy import selected_scores, subject_groups
 from .importer import import_epgu
 from .models import Applicant, Application, Call, Contract, ContractEvent, Quota, SeatPlan, User, now
 from .security import ROLES, authenticate, decode_token, token_for
@@ -82,6 +84,11 @@ class PlanData(Group):
 class ContractData(Input):
     application_id: int
     number: str = Field(min_length=1, max_length=100)
+
+
+class ContractBatch(Input):
+    year: int = Field(ge=2000, le=2100)
+    application_ids: list[int] = Field(min_length=1, max_length=50)
 
 
 class ContractPatch(Input):
@@ -152,6 +159,9 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
     @asynccontextmanager
     async def lifespan(app):
         db.create_schema()
+        from .seat_reference import seed_seat_plans
+        with db.uow() as connection:
+            seed_seat_plans(connection, 2026)
         yield
         db.engine.dispose()
 
@@ -225,6 +235,25 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
 
     examiner = [Depends(access("examiner"))]
 
+    @app.get("/exam-review/gradebook", dependencies=examiner)
+    def exam_gradebook(year: int = Query(ge=2000, le=2100), q: str = Query("", max_length=200),
+                       page: int = Query(0, ge=0, le=10000), s=Depends(session)):
+        name = func.trim(Applicant.surname + " " + Applicant.first_name + " " + Applicant.patronymic)
+        filters = [Application.year == year, Application.status.not_in(("withdrawn", "rejected"))]
+        for term in q.lower().replace("ё", "е").split():
+            filters.append(or_(func.replace(func.lower(name), "ё", "е").contains(term, autoescape=True),
+                               Applicant.number == term))
+        query = select(Application, Applicant).join(Applicant).where(*filters)
+        rows = s.execute(query.order_by(Applicant.surname, Applicant.first_name, Applicant.patronymic,
+                                        Applicant.number, Application.id).limit(26).offset(page * 25)).all()
+        return {"has_more": len(rows) > 25, "rows": [{
+            "id": app.id, "number": person.number,
+            "name": " ".join(filter(None, [person.surname, person.first_name, person.patronymic])),
+            "direction": app.direction, "study_form": app.study_form, "quota": app.quota,
+            "exams": app.exams, "total_score": app.total_score, "achievements": app.achievements,
+            "enrolled_at": app.enrolled_at, "subjects": subject_groups(app.direction, app.source),
+        } for app, person in rows[:25]]}
+
     @app.get("/exam-review/applicants", dependencies=examiner)
     def exam_applicants(q: str = Query(min_length=2, max_length=200), s=Depends(session)):
         name = func.trim(Applicant.surname + " " + Applicant.first_name + " " + Applicant.patronymic)
@@ -258,8 +287,10 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         exams = {name.strip(): score for name, score in body.exam_scores.items()}
         if len(exams) != len(body.exam_scores) or any(not name or len(name) > 120 for name in exams):
             raise ValueError("Укажите разные названия экзаменов длиной до 120 символов")
-        total = score_values(exams, item.achievements)
+        score_values(exams, 0)
         recorded = {**item.exams, **exams}
+        groups = subject_groups(item.direction, item.source)
+        total = score_values(selected_scores(recorded, groups) if groups else exams, item.achievements)
         if item.exams != body.previous_scores or item.total_score != body.previous_total:
             raise HTTPException(409, "Баллы уже изменены. Откройте карточку повторно.")
         result = s.execute(update(Application).where(
@@ -339,8 +370,11 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         svc.require(s, Applicant, body.applicant_number)
         values = body.model_dump(exclude={"exam_scores"})
         values["quota"] = body.quota.value
-        app_obj = Application(**values, exams=body.exam_scores,
-                              total_score=score_values(body.exam_scores, body.achievements))
+        exams = body.exam_scores
+        score_values(exams, 0)
+        groups = subject_groups(body.direction)
+        app_obj = Application(**values, exams=exams,
+                              total_score=score_values(selected_scores(exams, groups) if groups else exams, body.achievements))
         s.add(app_obj)
         s.flush()
         return model_dict(app_obj)
@@ -349,7 +383,10 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
     def register(body: RegistrationData, s=Depends(session)):
         if body.applicant.number != body.application.applicant_number:
             raise ValueError("Номера абитуриента и заявления должны совпадать")
-        total = score_values(body.application.exam_scores, body.application.achievements)
+        exams = body.application.exam_scores
+        score_values(exams, 0)
+        groups = subject_groups(body.application.direction)
+        total = score_values(selected_scores(exams, groups) if groups else exams, body.application.achievements)
         person = Applicant(**body.applicant.model_dump())
         s.add(person)
         s.flush()
@@ -370,7 +407,10 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
             raise ValueError("Для пересчёта ИД передайте выбранные exam_scores: в Excel есть альтернативные экзамены")
         if "exam_scores" in values:
             exams = values.pop("exam_scores")
-            obj.total_score = score_values(exams, values.get("achievements", obj.achievements))
+            score_values(exams, 0)
+            groups = subject_groups(obj.direction, obj.source)
+            obj.total_score = score_values(selected_scores(exams, groups) if groups else exams,
+                                           values.get("achievements", obj.achievements))
             obj.exams = exams
         for k, v in values.items():
             setattr(obj, k, v)
@@ -411,6 +451,26 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
     def new_contract(body: ContractData, user=Depends(staff), s=Depends(session)):
         return model_dict(svc.create_contract(s, body.application_id, body.number, user.login))
 
+    @app.post("/contracts/batch", dependencies=private, status_code=201)
+    def new_contracts(body: ContractBatch, user=Depends(staff), s=Depends(session)):
+        from .contract_fields import draft_document
+
+        contracts = svc.create_numbered_contracts(s, body.year, body.application_ids, user.login)
+        result = io.BytesIO()
+        with ZipFile(result, "w", compression=ZIP_DEFLATED) as archive:
+            for contract in contracts:
+                archive.writestr(f"{contract.number}.docx", draft_document(s, contract))
+        return Response(result.getvalue(), status_code=201, media_type="application/zip",
+                        headers={"Content-Disposition": 'attachment; filename="contracts.zip"'})
+
+    @app.get("/contracts/{contract_id}/document", dependencies=private)
+    def automatic_contract_document(contract_id: int, s=Depends(session)):
+        from .contract_fields import draft_document
+
+        content = draft_document(s, svc.require(s, Contract, contract_id))
+        return Response(content, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        headers={"Content-Disposition": 'attachment; filename="contract.docx"'})
+
     @app.patch("/contracts/{contract_id}", dependencies=private)
     def contract_status(contract_id: int, body: ContractPatch, user=Depends(staff), s=Depends(session)):
         return model_dict(svc.update_contract(s, svc.require(s, Contract, contract_id), user.login,
@@ -439,7 +499,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
 
     @app.post("/contracts/{contract_id}/complete-document", dependencies=private)
     def complete_document(contract_id: int, fields: dict[str, str], s=Depends(session)):
-        from .contract_fields import FIELDS
+        from .contract_fields import FIELDS, TEMPLATE
         contract = svc.require(s, Contract, contract_id)
         if fields.keys() - FIELDS.keys():
             raise ValueError("Передано неизвестное поле договора")
@@ -449,8 +509,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         values = {key: value.strip() for key, value in fields.items()}
         if any(len(value) > 240 or "{{" in value or "\n" in value or "\r" in value for value in values.values()):
             raise ValueError("Поля договора должны содержать одну строку до 240 символов")
-        template = Path(__file__).with_name("admission_2026") / "documents" / "contract-with-addendum.docx"
-        content = svc.render_contract(s, contract, template, values)
+        content = svc.render_contract(s, contract, TEMPLATE, values)
         return Response(content, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         headers={"Content-Disposition": 'attachment; filename="contract.docx"'})
 
@@ -494,6 +553,11 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
     @app.get("/reports/statistics", dependencies=private)
     def stats(year: int, s=Depends(session)):
         return svc.statistics(s, year)
+
+    @app.get("/reports/seat-reference", dependencies=private)
+    def full_seat_reference():
+        from .seat_reference import reference
+        return reference()
 
     @app.get("/reports/bachelor-seat-reference", dependencies=private)
     def bachelor_seat_reference():

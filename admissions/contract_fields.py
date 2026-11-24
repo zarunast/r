@@ -22,6 +22,7 @@ FIELDS = {
     "student_address": "Адрес обучающегося",
     "student_passport": "Паспорт обучающегося: серия, номер, кем и когда выдан",
     "student_bank": "Банковские реквизиты обучающегося (или «Не применяется»)",
+    "student_email": "Электронная почта обучающегося",
     "student_phone": "Телефон обучающегося",
     "faculty": "Факультет, институт или колледж",
     "program_title": "Образовательная программа",
@@ -43,6 +44,7 @@ FIELDS = {
     "addendum_copies": "Количество экземпляров допсоглашения",
 }
 
+TEMPLATE = Path(__file__).with_name("admission_2026") / "documents" / "contract-with-addendum.docx"
 TARIFFS = json.loads((Path(__file__).with_name("admission_2026") / "tuition-2026.json").read_text(encoding="utf-8"))
 PROGRAM_CODE = re.compile(r"(?<!\d)\d{2}\.\d{2}\.\d{2}(?!\d)")
 AMOUNTS_IN_WORDS = {
@@ -101,18 +103,35 @@ def imported_address(profile, source):
 def defaults(session, contract):
     app = session.get(Application, contract.application_id)
     person = session.get(Applicant, app.applicant_number)
-    profile = {key: text(value) for key, value in person.profile.items()}
+    profile = {key: text(value) for data in (app.source, person.profile)
+               for key, value in data.items() if text(value)}
     passport_number = " ".join(filter(None, [profile.get("Серия"), profile.get("Номер")]))
     return {
         "full_name": " ".join(filter(None, [person.surname, person.first_name, person.patronymic])),
         "student_birth": profile.get("Дата рождения", ""),
         "student_address": imported_address(profile, app.source),
         "student_phone": profile.get("Телефон") or text(app.source.get("Телефон")),
+        "student_email": profile.get("Почта") or text(app.source.get("Электронная почта")),
         "student_passport": ", ".join(filter(None, [
-            passport_number, profile.get("Кем выдан"), profile.get("Дата выдачи"),
+            profile.get("ДУЛ"), passport_number, profile.get("Кем выдан"),
+            profile.get("Дата выдачи"), profile.get("Страна выдачи"),
         ])),
         "program_title": text(app.source.get("Обр.программа")) or app.direction,
         "program_direction": " · ".join((app.study_form, text(app.source.get("НПС/УГСН")) or app.direction)),
         "first_academic_year": f"{app.year}–{app.year + 1}",
         **tuition_defaults(app),
+        **({"faculty": profile["Факультет"]} if profile.get("Факультет") else {}),
     }
+
+
+def draft_document(session, contract):
+    from .services import render_contract
+
+    values = defaults(session, contract)
+    date = contract.created_at.strftime("%d.%m.%Y")
+    filled = {"contract_date": date, "addendum_date": date, "academic_year": values["first_academic_year"],
+              "contract_copies": "2", "addendum_copies": "2"}
+    return render_contract(session, contract, TEMPLATE, {
+        key: filled.get(key) or values.get(key) or "____________________"
+        for key in FIELDS
+    })

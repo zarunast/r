@@ -124,7 +124,7 @@ export function Rankings() {
         </button>
         {!demo && year === 2026 && (
           <button className="button" onClick={() => setReference(true)}>
-            Места бакалавриата 2026
+            Места бакалавриата и специалитета 2026
           </button>
         )}
         {!demo && (
@@ -291,7 +291,7 @@ type SeatReferenceRow = {
 
 function SeatReference({ onClose }: { onClose: () => void }) {
   const { data, loading, error } = useLoad<SeatReferenceRow[]>(
-    "/reports/bachelor-seat-reference",
+    "/reports/seat-reference",
   );
   const [form, setForm] = useState("Очная");
   const [filter, setFilter] = useState("");
@@ -306,7 +306,7 @@ function SeatReference({ onClose }: { onClose: () => void }) {
     ) || [];
   return (
     <Modal
-      title="Места бакалавриата на 2026–2027 год"
+      title="Места бакалавриата и специалитета на 2026–2027 год"
       subtitle="Сведения БГТУ от 15.04.2026"
       onClose={onClose}
       wide
@@ -370,7 +370,16 @@ function SeatReference({ onClose }: { onClose: () => void }) {
           "/public/admission/documents/bachelor-seats"
         }
       >
-        Исходный PDF
+        Бакалавриат · PDF
+      </a>
+      <a
+        className="button"
+        href={
+          (import.meta.env.DEV ? "/api" : "") +
+          "/public/admission/documents/specialist-seats"
+        }
+      >
+        Специалитет · PDF
       </a>
     </Modal>
   );
@@ -391,6 +400,11 @@ function OrderModal({
   const [selected, setSelected] = useState<number[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const eligible = rows.filter(
+    (row) =>
+      ["participating", "accepted"].includes(row.status) &&
+      (quota === "paid" ? row.paid_registered : row.consent),
+  );
   return (
     <Modal
       title="Проект приказа о зачислении"
@@ -449,27 +463,29 @@ function OrderModal({
         </p>
         <fieldset className="order-candidates">
           <legend>Кандидаты · выбрано {selected.length}</legend>
-          {rows
-            .filter(
-              (row) =>
-                row.status !== "enrolled" && (quota === "paid" || row.consent),
-            )
-            .map((row) => (
-              <label key={row.application_id}>
-                <input
-                  type="checkbox"
-                  checked={selected.includes(row.application_id)}
-                  onChange={(event) =>
-                    setSelected((current) =>
-                      event.target.checked
-                        ? [...current, row.application_id]
-                        : current.filter((id) => id !== row.application_id),
-                    )
-                  }
-                />
-                {row.full_name} · {row.applicant_number} · {row.score} баллов
-              </label>
-            ))}
+          {!eligible.length && (
+            <p>
+              {quota === "paid"
+                ? "Нужен зарегистрированный оплаченный договор."
+                : "Нет действующих заявлений с согласием на зачисление."}
+            </p>
+          )}
+          {eligible.map((row) => (
+            <label key={row.application_id}>
+              <input
+                type="checkbox"
+                checked={selected.includes(row.application_id)}
+                onChange={(event) =>
+                  setSelected((current) =>
+                    event.target.checked
+                      ? [...current, row.application_id]
+                      : current.filter((id) => id !== row.application_id),
+                  )
+                }
+              />
+              {row.full_name} · {row.applicant_number} · {row.score} баллов
+            </label>
+          ))}
         </fieldset>
         {error && <ErrorState error={error} />}
         <div className="modal-footer">
@@ -502,9 +518,7 @@ function PlanModal({
   const [error, setError] = useState("");
   const [seatValue, setSeatValue] = useState(String(seats ?? 0));
   const reference = useLoad<SeatReferenceRow[]>(
-    year === 2026 && /бак/i.test(group.campaign)
-      ? "/reports/bachelor-seat-reference"
-      : null,
+    year === 2026 ? "/reports/seat-reference" : null,
   );
   const matchingForm =
     reference.data?.filter(
@@ -553,7 +567,7 @@ function PlanModal({
         </label>
         {matchingForm.length > 0 && (
           <label className="field">
-            Подставить из справочника бакалавриата
+            Подставить из справочника
             <select
               defaultValue=""
               onChange={(event) => {

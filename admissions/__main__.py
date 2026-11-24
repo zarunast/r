@@ -15,6 +15,7 @@ def main():
     parser.add_argument("--database", default=os.environ.get("DATABASE_URL", "sqlite:///data/admissions.sqlite3"))
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("init-db")
+    commands.add_parser("presentation", help="Создать отдельную демонстрационную базу")
     user = commands.add_parser("create-user")
     user.add_argument("login")
     user.add_argument("--role", choices=ROLES, default="operator")
@@ -25,6 +26,13 @@ def main():
     backup = commands.add_parser("backup")
     backup.add_argument("destination", type=Path)
     args = parser.parse_args()
+    if args.command == "presentation":
+        from .presentation import DATABASE_URL, PASSWORD, seed_presentation
+        seed_presentation()
+        print(DATABASE_URL)
+        print("demo-secretary / demo-teacher / demo-editor")
+        print(PASSWORD)
+        return 0
     db = Database(args.database)
     db.create_schema()
     try:

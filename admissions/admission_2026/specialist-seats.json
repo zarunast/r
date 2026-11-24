@@ -1,0 +1,98 @@
+[
+  {
+    "code": "10.05.03",
+    "profile": "Безопасность открытых информационных систем",
+    "study_form": "Очная",
+    "seats": {
+      "general": 24,
+      "special": 3,
+      "target": 0,
+      "separate": 3,
+      "paid": 5
+    }
+  },
+  {
+    "code": "10.05.04",
+    "profile": "Автоматизация информационно-аналитической деятельности",
+    "study_form": "Очная",
+    "seats": {
+      "general": 21,
+      "special": 3,
+      "target": 0,
+      "separate": 3,
+      "paid": 5
+    }
+  },
+  {
+    "code": "15.05.01",
+    "profile": "Проектирование технологических комплексов механосборочных производств",
+    "study_form": "Заочная",
+    "seats": {
+      "general": 0,
+      "special": 0,
+      "target": 0,
+      "separate": 0,
+      "paid": 60
+    }
+  },
+  {
+    "code": "15.05.01",
+    "profile": "Проектирование технологических машин и комплексов",
+    "study_form": "Очная",
+    "seats": {
+      "general": 16,
+      "special": 3,
+      "target": 0,
+      "separate": 3,
+      "paid": 5
+    }
+  },
+  {
+    "code": "23.05.03",
+    "profile": "Технология производства и ремонта подвижного состава",
+    "study_form": "Очная",
+    "seats": {
+      "general": 46,
+      "special": 6,
+      "target": 0,
+      "separate": 6,
+      "paid": 5
+    }
+  },
+  {
+    "code": "23.05.03",
+    "profile": "Технология производства и ремонта подвижного состава",
+    "study_form": "Заочная",
+    "seats": {
+      "general": 0,
+      "special": 0,
+      "target": 0,
+      "separate": 0,
+      "paid": 100
+    }
+  },
+  {
+    "code": "23.05.03",
+    "profile": "Локомотивы",
+    "study_form": "Очная",
+    "seats": {
+      "general": 19,
+      "special": 3,
+      "target": 0,
+      "separate": 3,
+      "paid": 5
+    }
+  },
+  {
+    "code": "23.05.03",
+    "profile": "Пассажирские вагоны",
+    "study_form": "Очная",
+    "seats": {
+      "general": 19,
+      "special": 3,
+      "target": 0,
+      "separate": 3,
+      "paid": 5
+    }
+  }
+]

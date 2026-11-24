@@ -26,6 +26,8 @@ def record_activity(session, request):
         action, target = "Обновлены подтверждения оплаты", "Реестр договоров"
     elif path.startswith("/contracts") and path.endswith("/document"):
         action, target = "Сформирован документ договора", "Документы"
+    elif path == "/contracts/batch":
+        action, target = "Созданы договоры по шаблону", "Договоры"
     elif path.startswith("/contracts"):
         action, target = ("Создан договор" if request.method == "POST" else "Изменён статус договора"), "Реестр договоров"
     elif path.startswith("/applicants") or path == "/registry":
@@ -52,11 +54,16 @@ def staff_rankings(s, year, direction, campaign, study_form):
     public = svc.all_rankings(s, year, direction, campaign, study_form)
     people = {(a.applicant_number, a.quota): (a, p) for a, p in s.execute(
         svc.group_query(year, direction, campaign, study_form).add_columns(Applicant).join(Applicant))}
+    ready = set(s.scalars(select(Contract.application_id).join(Application).where(
+        Application.year == year, Application.direction == direction,
+        Application.campaign == campaign, Application.study_form == study_form,
+        Contract.paid.is_(True), Contract.stage == "registered",
+    )))
     for quota, rows in public.items():
         for row in rows:
             a, p = people[(row["applicant_number"], quota)]
             row.update(application_id=a.id, full_name=" ".join(filter(None, [p.surname, p.first_name, p.patronymic])),
-                       consent=a.consent, priority=a.priority, status=a.status)
+                       consent=a.consent, priority=a.priority, status=a.status, paid_registered=a.id in ready)
     return public
 
 

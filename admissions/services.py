@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 import io
 import json
+import re
 import sqlite3
 from pathlib import Path
 from xml.etree.ElementTree import Element, SubElement, tostring
@@ -114,6 +115,23 @@ def create_contract(session, application_id, number, actor):
     session.add(ContractEvent(contract_id=contract.id, actor=actor,
                               changes={"created": True, "location": "admissions", "stage": "draft"}))
     return contract
+
+
+def create_numbered_contracts(session, year, ids, actor):
+    # Serialize number allocation with other SQLite writes, including manual contracts.
+    session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    applications = set(session.scalars(select(Application.id).where(
+        Application.id.in_(ids), Application.year == year)))
+    if len(applications) != len(ids):
+        raise ValueError("Выберите разные заявления одной приёмной кампании")
+    numbers = session.scalars(select(Contract.number).where(
+        Contract.number.like(f"%{year}-%"))).all()
+    # Учитываем буквенный префикс независимо от регистра, включая кириллические номера.
+    sequence = max((int(match[1]) for number in numbers if
+                    (match := re.fullmatch(rf"(?:д|демо)-{year}-([0-9]+)", number.casefold()))),
+                   default=0)
+    return [create_contract(session, app_id, f"Д-{year}-{sequence + offset:04d}", actor)
+            for offset, app_id in enumerate(ids, 1)]
 
 
 def update_contract(session, contract, actor, *, location=None, stage=None, paid=None):

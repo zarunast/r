@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { CalendarDays, MessageSquare, Phone, PhoneCall } from "lucide-react";
 import { demoDate } from "../demo";
+import { csvFile } from "./Rankings";
 import { jsonBody, useLoad, useStore } from "../store";
 import { callLabels, params, type CallItem } from "../types";
 import {
@@ -14,12 +15,16 @@ import {
 } from "../components/ui";
 
 export function Calls() {
-  const { year, demo, dates, setDates } = useStore();
+  const { year, user, demo, dates, setDates } = useStore();
   const { change, payment } = dates;
   const { data, loading, error } = useLoad<CallItem[]>(
     change && payment
       ? `/calls/queue?${params({ year, change_deadline: change, payment_deadline: payment })}`
       : null,
+  );
+  const presentation = user.login === "demo-secretary";
+  const dashboard = useLoad<{ date: string }>(
+    presentation ? `/dashboard?year=${year}` : null,
   );
   const [selected, setSelected] = useState<CallItem | null>(null);
   return (
@@ -65,6 +70,18 @@ export function Calls() {
             required
           />
         </label>
+        {presentation && dashboard.data && (
+          <button
+            type="button"
+            className="button"
+            onClick={() => {
+              const today = dashboard.data!.date;
+              setDates({ change: today, payment: today });
+            }}
+          >
+            Демо-сроки
+          </button>
+        )}
       </div>
       <div className="notice-inline">
         Приоритет учитывает согласие, выбор направления и этап договора. Это
@@ -78,9 +95,32 @@ export function Calls() {
             <h2>Список для обзвона</h2>
             <p>Платные заявления, которым требуется внимание</p>
           </div>
-          <Badge tone="blue" dot={false}>
-            По приоритету
-          </Badge>
+          {data?.length ? (
+            <button
+              className="button"
+              type="button"
+              onClick={() =>
+                csvFile(
+                  data.map((item) => ({
+                    "Номер абитуриента": item.applicant_number,
+                    Направление: item.direction,
+                    Телефон: item.phone,
+                    Приоритет: item.priority_score,
+                    "Последний результат": item.last_result
+                      ? callLabels[item.last_result]
+                      : "",
+                  })),
+                  "call-list.csv",
+                )
+              }
+            >
+              Скачать список CSV
+            </button>
+          ) : (
+            <Badge tone="blue" dot={false}>
+              По приоритету
+            </Badge>
+          )}
         </div>
         {error ? (
           <ErrorState error={error} />

@@ -1,23 +1,10 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import { AdmissionPage } from "../applicant-workspace/Admission";
-import { useLoad, useStore } from "../store";
+import { jsonBody, useLoad, useStore } from "../store";
+
+import { quotaLabels, type Quota } from "../types";
 
 type PageEntry = { key: string; title: string; href: string };
-type Person = { number: string; name: string };
-type ExamApplication = {
-  id: number;
-  year: number;
-  campaign: string;
-  direction: string;
-  study_form: string;
-  quota: string;
-  exams: Record<string, number>;
-  total_score: number;
-  achievements: number;
-  enrolled_at: string | null;
-};
-type RecordDetail = Person & { applications: ExamApplication[] };
-
 function SiteEditor({ token }: { token: string }) {
   const { data, loading, error } = useLoad<PageEntry[]>(
     "/admission-content/pages",
@@ -68,188 +55,166 @@ function SiteEditor({ token }: { token: string }) {
   );
 }
 
-function Scores({
-  application,
-  onSave,
-}: {
-  application: ExamApplication;
-  onSave: (result: Pick<ExamApplication, "exams" | "total_score">) => void;
-}) {
+type GradeRow = {
+  id: number;
+  number: string;
+  name: string;
+  direction: string;
+  study_form: string;
+  quota: string;
+  subjects: string[][];
+  exams: Record<string, number>;
+  total_score: number;
+  achievements: number;
+  enrolled_at: string | null;
+};
+
+const standardSubjects = [
+  "Русский язык",
+  "Математика",
+  "Информатика",
+  "Механика",
+  "Физика",
+  "Обществознание",
+  "Междисциплинарный экзамен",
+  "Специальная дисциплина",
+];
+
+function GradebookRow({ row, columns }: { row: GradeRow; columns: string[] }) {
   const { api } = useStore();
-  const consistent =
-    Object.values(application.exams).reduce(
-      (sum, score) => sum + score,
-      application.achievements,
-    ) === application.total_score;
-  const [rows, setRows] = useState(() =>
-    Object.entries(application.exams).map(([name, score]) => ({
-      name,
-      score: String(score),
-      selected: consistent,
-    })),
-  );
+  const [result, setResult] = useState(row);
+  const [draft, setDraft] = useState<Record<string, string>>({});
   const [status, setStatus] = useState("");
-  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    const included = rows.filter((row) => row.selected);
-    const exams = Object.fromEntries(
-      included.map(({ name, score }) => [name.trim(), Number(score)]),
-    );
-    if (
-      !included.length ||
-      Object.keys(exams).length !== included.length ||
-      included.some(({ name, score }) => !name.trim() || !score.trim())
-    ) {
-      setError(
-        "Выберите экзамены для конкурсной суммы. Укажите разные названия и заполните баллы.",
-      );
-      return;
-    }
+  async function save() {
     setBusy(true);
-    setError("");
     setStatus("");
     try {
-      const result = await api<Pick<ExamApplication, "exams" | "total_score">>(
-        `/exam-review/applications/${application.id}/scores`,
-        {
-          method: "PUT",
-          body: JSON.stringify({
-            exam_scores: exams,
-            previous_scores: application.exams,
-            previous_total: application.total_score,
-          }),
-        },
+      const scores = { ...result.exams };
+      for (const [name, value] of Object.entries(draft)) {
+        if (!/^\d{1,3}$/.test(value) || Number(value) > 100)
+          throw new Error("Укажите целое число от 0 до 100.");
+        scores[name] = Number(value);
+      }
+      const saved = await api<Pick<GradeRow, "exams" | "total_score">>(
+        `/exam-review/applications/${row.id}/scores`,
+        jsonBody(
+          {
+            exam_scores: scores,
+            previous_scores: result.exams,
+            previous_total: result.total_score,
+          },
+          "PUT",
+        ),
       );
-      onSave(result);
-      setStatus("Баллы сохранены.");
-    } catch (failure) {
-      setError((failure as Error).message);
+      setResult({ ...result, ...saved });
+      setDraft({});
+      setStatus("Сохранено");
+    } catch (error) {
+      setStatus((error as Error).message);
     } finally {
       setBusy(false);
     }
   }
 
-  function change(index: number, values: Partial<(typeof rows)[number]>) {
-    setRows((current) =>
-      current.map((row, position) =>
-        position === index ? { ...row, ...values } : row,
-      ),
-    );
-    setStatus("");
-  }
-
   return (
-    <form className="exam-score-form" onSubmit={submit}>
-      <p>
-        Конкурсная сумма: {application.total_score}. Индивидуальные достижения:{" "}
-        {application.achievements}.
-      </p>
-      {application.enrolled_at ? (
-        <>
-          <p>Заявление зачислено.</p>
-          <ul>
-            {Object.entries(application.exams).map(([name, score]) => (
-              <li key={name}>
-                {name} · {score}
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : (
-        <fieldset disabled={busy}>
-          <legend>Экзамены</legend>
-          <p>
-            Отметьте экзамены, которые должны войти в конкурсную сумму. Ранее
-            сохранённые результаты останутся в карточке.
-          </p>
-          {rows.map((row, index) => (
-            <div className="exam-score-row" key={index}>
-              <label className="exam-score-check">
-                <input
-                  type="checkbox"
-                  checked={row.selected}
-                  onChange={(event) =>
-                    change(index, { selected: event.target.checked })
-                  }
-                />
-                Включить в сумму
-              </label>
-              <label>
-                Экзамен
-                <input
-                  value={row.name}
-                  maxLength={120}
-                  readOnly={Boolean(application.exams[row.name] !== undefined)}
-                  onChange={(event) =>
-                    change(index, { name: event.target.value })
-                  }
-                />
-              </label>
-              <label>
-                Баллы
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={row.score}
-                  disabled={!row.selected}
-                  onChange={(event) =>
-                    change(index, { score: event.target.value })
-                  }
-                />
-              </label>
-            </div>
-          ))}
+    <tr>
+      <th scope="row">
+        {row.name}
+        <small className="block muted">
+          № {row.number} · {row.direction} · {row.study_form} ·{" "}
+          {quotaLabels[row.quota as Quota] ?? row.quota}
+        </small>
+      </th>
+      {columns.map((name) => {
+        const allowed =
+          row.subjects.length === 0 || row.subjects.flat().includes(name);
+        return (
+          <td key={name}>
+            {allowed && !row.enrolled_at ? (
+              <input
+                aria-label={`${row.name} · ${name}`}
+                type="number"
+                min={0}
+                max={100}
+                value={draft[name] ?? result.exams[name] ?? ""}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setDraft((current) => {
+                    const next = { ...current };
+                    if (value === "") delete next[name];
+                    else next[name] = value;
+                    return next;
+                  });
+                }}
+                style={{ width: "5.25rem" }}
+              />
+            ) : (
+              (result.exams[name] ?? "—")
+            )}
+          </td>
+        );
+      })}
+      <td>{row.achievements}</td>
+      <td>{result.total_score}</td>
+      <td>
+        {row.enrolled_at ? (
+          "Зачислен"
+        ) : (
           <button
             type="button"
             className="button"
-            onClick={() =>
-              setRows((current) => [
-                ...current,
-                { name: "", score: "", selected: true },
-              ])
-            }
+            disabled={busy || !Object.keys(draft).length}
+            onClick={save}
           >
-            Добавить экзамен
+            Сохранить
           </button>
-          <button type="submit" className="button primary">
-            Сохранить баллы
-          </button>
-        </fieldset>
-      )}
-      {status && <p role="status">{status}</p>}
-      {error && <p role="alert">{error}</p>}
-    </form>
+        )}
+        {status && (
+          <small className="block" role="status">
+            {status}
+          </small>
+        )}
+      </td>
+    </tr>
   );
 }
 
 function ExamReview() {
+  const { year } = useStore();
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
-  const [number, setNumber] = useState("");
-  const matches = useLoad<Person[]>(
-    search ? "/exam-review/applicants?q=" + encodeURIComponent(search) : null,
+  const [page, setPage] = useState(0);
+  const { data, loading, error } = useLoad<{
+    rows: GradeRow[];
+    has_more: boolean;
+  }>(
+    `/exam-review/gradebook?${new URLSearchParams({ year: String(year), q: search, page: String(page) })}`,
   );
+  const columns = [
+    ...new Set(
+      data?.rows.flatMap((row) => [
+        ...(row.subjects.length ? row.subjects.flat() : standardSubjects),
+        ...Object.keys(row.exams),
+      ]),
+    ),
+  ];
   return (
-    <>
+    <section>
+      <h2>Табель вступительных испытаний</h2>
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          setNumber("");
+          setPage(0);
           setSearch(query.trim());
         }}
       >
         <label>
-          ФИО абитуриента
+          ФИО или номер абитуриента
           <input
-            required
-            minLength={2}
-            maxLength={200}
             value={query}
+            maxLength={200}
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
@@ -257,83 +222,48 @@ function ExamReview() {
           Найти
         </button>
       </form>
-      {matches.loading && <p role="status">Поиск…</p>}
-      {matches.error && <p role="alert">{matches.error}</p>}
-      {matches.data?.length === 0 && search && <p>Абитуриенты не найдены.</p>}
-      {matches.data && matches.data.length > 0 && (
-        <ul className="exam-matches">
-          {matches.data.map((person) => (
-            <li key={person.number}>
-              <button
-                type="button"
-                className="button"
-                aria-pressed={number === person.number}
-                onClick={() => setNumber(person.number)}
-              >
-                {person.name} · № {person.number}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {number && <ExamRecord key={number} number={number} />}
-    </>
-  );
-}
-
-function ExamRecord({ number }: { number: string }) {
-  const { data, loading, error } = useLoad<RecordDetail>(
-    "/exam-review/applicants/" + encodeURIComponent(number),
-  );
-  const [saved, setSaved] = useState<
-    Record<number, Pick<ExamApplication, "exams" | "total_score">>
-  >({});
-  const [selected, setSelected] = useState<number>();
-  const application =
-    data?.applications.find(({ id }) => id === selected) ??
-    data?.applications[0];
-  return (
-    <section className="exam-record" aria-label="Карточка абитуриента">
-      {loading && <p role="status">Загрузка карточки…</p>}
+      {loading && <p role="status">Загрузка табеля…</p>}
       {error && <p role="alert">{error}</p>}
-      {data && (
-        <>
-          <h2>{data.name}</h2>
-          <p>Номер абитуриента: {data.number}</p>
-          {application ? (
-            <>
-              <label>
-                Заявление
-                <select
-                  value={application.id}
-                  onChange={(event) => setSelected(Number(event.target.value))}
-                >
-                  {data.applications.map(
-                    ({ id, year, direction, study_form, quota, campaign }) => (
-                      <option key={id} value={id}>
-                        {year} · {direction} · {campaign} · {study_form} ·{" "}
-                        {quota}
-                      </option>
-                    ),
-                  )}
-                </select>
-              </label>
-              <Scores
-                key={application.id}
-                application={{ ...application, ...saved[application.id] }}
-                onSave={(result) =>
-                  setSaved((current) => ({
-                    ...current,
-                    [application.id]: result,
-                  }))
-                }
-              />
-            </>
-          ) : (
-            <p>У абитуриента пока нет заявлений.</p>
-          )}
-        </>
+      {!loading && data?.rows.length === 0 && <p>Заявлений не найдено.</p>}
+      {!loading && !!data?.rows.length && (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Абитуриент и программа</th>
+                {columns.map((name) => (
+                  <th key={name}>{name}</th>
+                ))}
+                <th>ИД</th>
+                <th>Итого</th>
+                <th>Действие</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((row) => (
+                <GradebookRow key={row.id} row={row} columns={columns} />
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
+      <div aria-label="Страницы табеля">
+        <button
+          className="button"
+          disabled={page === 0 || loading}
+          onClick={() => setPage(page - 1)}
+        >
+          Назад
+        </button>
+        <span> Страница {page + 1} </span>
+        <button
+          className="button"
+          disabled={!data?.has_more || loading}
+          onClick={() => setPage(page + 1)}
+        >
+          Далее
+        </button>
+      </div>
     </section>
   );
 }
@@ -342,7 +272,13 @@ export function RoleWorkspace() {
   const { token, user, logout } = useStore();
   if (!token) return null;
   return (
-    <main className="role-workspace">
+    <main
+      className={
+        user.role_id === "examiner"
+          ? "role-workspace gradebook"
+          : "role-workspace"
+      }
+    >
       <header className="role-workspace-header">
         <div>
           <h1>{user.role}</h1>

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import {
   ArrowDownToLine,
   ArrowUpRight,
@@ -53,7 +53,7 @@ export function Contracts({ onPayments }: { onPayments: () => void }) {
         </button>
         <button className="button primary" onClick={() => setCreating(true)}>
           <Plus size={17} />
-          Создать договор
+          Создать договоры
         </button>
       </PageHeading>
       <section className="panel">
@@ -202,9 +202,10 @@ export function Contracts({ onPayments }: { onPayments: () => void }) {
 }
 
 function CreateContract({ onClose }: { onClose: () => void }) {
-  const { api, year, refresh, notify } = useStore();
+  const { api, download, year, refresh, notify } = useStore();
   const [number, setNumber] = useState("");
   const [person, setPerson] = useState<PersonDetail | null>(null);
+  const [selected, setSelected] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const eligible =
@@ -217,8 +218,8 @@ function CreateContract({ onClose }: { onClose: () => void }) {
     ) || [];
   return (
     <Modal
-      title="Новый договор"
-      subtitle="Договор оформляется для платного заявления"
+      title="Новые договоры"
+      subtitle="Выберите платные заявления. Шаблон и номера подставятся автоматически."
       onClose={onClose}
     >
       <div className="contract-lookup">
@@ -262,53 +263,29 @@ function CreateContract({ onClose }: { onClose: () => void }) {
             {person.surname} {person.first_name} {person.patronymic}
           </p>
           {eligible.length ? (
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                const f = new FormData(e.currentTarget);
-                setBusy(true);
-                setError("");
-                try {
-                  await api(
-                    "/contracts",
-                    jsonBody({
-                      application_id: Number(f.get("application_id")),
-                      number: f.get("contract_number"),
-                    }),
-                  );
-                  refresh();
-                  notify("Договор создан");
-                  onClose();
-                } catch (err) {
-                  setError((err as Error).message);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              <label className="field">
-                Платное заявление
-                <select name="application_id">
-                  {eligible.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.direction} · {a.study_form}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                Номер договора
-                <input
-                  name="contract_number"
-                  placeholder={`Д-${year}-0001`}
-                  required
-                  maxLength={100}
-                />
-              </label>
-              <div className="modal-footer">
-                <SaveButton busy={busy} label="Создать договор" />
-              </div>
-            </form>
+            <fieldset>
+              <legend>Платные заявления</legend>
+              {eligible.map((application) => (
+                <label key={application.id}>
+                  <input
+                    type="checkbox"
+                    checked={application.id in selected}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setSelected((current) => {
+                        const next = { ...current };
+                        if (checked)
+                          next[application.id] =
+                            `${person.surname} ${person.first_name} · ${application.direction}`;
+                        else delete next[application.id];
+                        return next;
+                      });
+                    }}
+                  />
+                  {application.direction} · {application.study_form}
+                </label>
+              ))}
+            </fieldset>
           ) : (
             <div className="notice-inline">
               У абитуриента нет доступных платных заявлений в кампании {year}.
@@ -317,6 +294,58 @@ function CreateContract({ onClose }: { onClose: () => void }) {
           )}
         </>
       )}
+      <ul>
+        {Object.entries(selected).map(([id, label]) => (
+          <li key={id}>
+            {label}{" "}
+            <button
+              type="button"
+              className="button"
+              onClick={() =>
+                setSelected((current) => {
+                  const next = { ...current };
+                  delete next[Number(id)];
+                  return next;
+                })
+              }
+            >
+              Убрать
+            </button>
+          </li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        className="button primary"
+        disabled={
+          busy ||
+          !Object.keys(selected).length ||
+          Object.keys(selected).length > 50
+        }
+        onClick={async () => {
+          setBusy(true);
+          setError("");
+          try {
+            await download(
+              "/contracts/batch",
+              "Договоры.zip",
+              jsonBody({
+                year,
+                application_ids: Object.keys(selected).map(Number),
+              }),
+            );
+            refresh();
+            notify("Договоры созданы, архив сформирован");
+            onClose();
+          } catch (error) {
+            setError((error as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        Создать и скачать · {Object.keys(selected).length}
+      </button>
       {error && <ErrorState error={error} />}
     </Modal>
   );
@@ -391,7 +420,6 @@ function ContractModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [showComplete, setShowComplete] = useState(false);
-  const input = useRef<HTMLInputElement>(null);
   const history = useLoad<
     {
       at: string;
@@ -499,16 +527,21 @@ function ContractModal({
           <button
             className="button"
             type="button"
-            onClick={() => {
-              if (demo) {
-                setError("Генерация DOCX доступна после входа в рабочую базу");
-                return;
+            disabled={demo}
+            onClick={async () => {
+              setError("");
+              try {
+                await download(
+                  `/contracts/${contract.id}/document`,
+                  `${contract.number}.docx`,
+                );
+              } catch (error) {
+                setError((error as Error).message);
               }
-              input.current?.click();
             }}
           >
             <ArrowDownToLine size={16} />
-            Заполнить шаблон Word
+            Скачать договор и допсоглашение
           </button>
           <a
             className="button"
@@ -539,29 +572,6 @@ function ContractModal({
           {showComplete && <CompleteContract id={contract.id} />}
         </details>
       )}
-      <input
-        ref={input}
-        type="file"
-        accept=".docx"
-        className="sr-only"
-        aria-label="Шаблон договора Word"
-        onChange={async (e) => {
-          const file = e.target.files?.[0];
-          if (!file) return;
-          try {
-            const form = new FormData();
-            form.append("template", file);
-            await download(
-              `/contracts/${contract.id}/document`,
-              "contract.docx",
-              { method: "POST", body: form },
-            );
-            notify("Договор Word сформирован");
-          } catch (err) {
-            setError((err as Error).message);
-          }
-        }}
-      />
       <div className="history-heading">
         <History size={17} />
         <h4>История изменений</h4>

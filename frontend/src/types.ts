@@ -70,6 +70,7 @@ export type PersonDetail = Omit<
   contracts: Contract[];
 };
 export type Rank = {
+  paid_registered?: boolean;
   applicant_number: string;
   application_id: number;
   full_name: string;
