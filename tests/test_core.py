@@ -292,3 +292,31 @@ def test_epgu_missing_totals_and_backfill(db, tmp_path):
     assert not import_epgu(db, excel(path, [official]), 2026).errors
     with db.uow() as session:
         assert session.scalar(select(Application).filter_by(applicant_number="003")).total_score == 200
+
+
+def test_ranking_first_priority_with_consent_precedes_other_scores(db, tmp_path):
+    def entry(number, score, priority, consent):
+        values = row(number, score=score)
+        values[-3:-1] = [priority, consent]
+        return values
+
+    path = excel(tmp_path / "priority.xlsx", [
+        entry("001", 295, 1, "НЕТ"),
+        entry("002", 290, 2, "ДА"),
+        entry("003", 260, 1, "ДА"),
+        entry("004", 270, 1, "ДА"),
+        entry("005", 260, 1, "ДА"),
+        entry("006", 260, 2, "ДА"),
+    ])
+    assert not import_epgu(db, path, 2026).errors
+    with db.uow() as session:
+        group = dict(year=2026, campaign="бак", direction="ИТ", study_form="Очная", quota="general")
+        session.add(SeatPlan(**group, seats=2))
+        session.flush()
+        ranked = svc.ranking(session, **group)
+        assert [(item["applicant_number"], item["rank"]) for item in ranked] == [
+            ("004", 1), ("003", 2), ("005", 2), ("001", 4), ("002", 5), ("006", 6),
+        ]
+        for number, expected in [("004", "within_seats"), ("003", "tie_at_boundary"), ("001", "outside_seats")]:
+            application = session.scalar(select(Application).filter_by(applicant_number=number))
+            assert svc.forecast(session, application)["assessment"] == expected

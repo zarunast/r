@@ -54,17 +54,23 @@ def current_application():
     return Application.source["_missing_from_snapshot"].as_string().is_(None)
 
 
+def competition_order():
+    first_with_consent = (Application.priority == 1) & Application.consent.is_(True)
+    return first_with_consent.desc(), Application.total_score.desc(), Application.applicant_number
+
+
 def ranking(session, year, direction, campaign, study_form, quota, *, public_flags=False):
-    """Ничьи разрешаются номером для стабильности; это не правило приказа о зачислении."""
+    """При равных условиях номер заявления задаёт только порядок отображения."""
     q = group_query(year, direction, campaign, study_form, quota).where(Application.status.in_(ACTIVE), current_application())
-    rows = session.scalars(q.order_by(Application.total_score.desc(), Application.applicant_number)).all()
+    rows = session.scalars(q.order_by(*competition_order())).all()
     result = []
     previous = None
     place = 0
     for index, app in enumerate(rows, 1):
-        if app.total_score != previous:
+        position_key = (app.priority == 1 and app.consent, app.total_score)
+        if position_key != previous:
             place = index
-        previous = app.total_score
+        previous = position_key
         result.append({"applicant_number": app.applicant_number, "score": app.total_score,
                        "quota": app.quota, "direction": app.direction, "rank": place})
         if public_flags:
@@ -96,8 +102,8 @@ def forecast(session, application):
     elif seats is None:
         result["factors"].append("План мест не задан.")
     else:
-        better = sum(r["score"] > a.total_score for r in rows)
-        tied = sum(r["score"] == a.total_score for r in rows)
+        better = own["rank"] - 1
+        tied = sum(r["rank"] == own["rank"] for r in rows)
         if better >= seats.seats:
             result["assessment"] = "outside_seats"
         elif better + tied <= seats.seats:
@@ -273,7 +279,7 @@ def enrollment_draft(session, group, ids, number, order_date, enrolled_at):
         raise ValueError("Сначала укажите количество мест для этой категории")
     candidates = session.scalars(group_query(**conditions, quota=quota).where(
         Application.id.in_(ids), Application.status.in_(ELIGIBLE), current_application(),
-    ).order_by(Application.total_score.desc(), Application.applicant_number)).all()
+    ).order_by(*competition_order())).all()
     if len(candidates) != len(set(ids)):
         raise ValueError("Выберите действующие заявления из одного конкурсного списка")
     if len(candidates) != len({item.applicant_number for item in candidates}):

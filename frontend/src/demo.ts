@@ -320,6 +320,8 @@ export async function demoRequest<T>(
     activity("Добавлено заявление", obj.direction);
     output = obj;
   } else if (path === "/rankings") {
+    const firstWithConsent = (application: Application) =>
+      Number(application.priority === 1 && application.consent);
     const lists = Object.fromEntries(
       ["general", "special", "separate", "target", "paid"].map((quota) => {
         const rows = inYear
@@ -331,12 +333,22 @@ export async function demoRequest<T>(
               a.quota === quota &&
               a.status !== "pending",
           )
-          .sort((a, b) => b.total_score - a.total_score);
+          .sort(
+            (a, b) =>
+              firstWithConsent(b) - firstWithConsent(a) ||
+              b.total_score - a.total_score ||
+              a.applicant_number.localeCompare(b.applicant_number),
+          );
         let rank = 0;
         return [
           quota,
           rows.map((a, i): Rank => {
-            if (!i || a.total_score !== rows[i - 1].total_score) rank = i + 1;
+            if (
+              !i ||
+              a.total_score !== rows[i - 1].total_score ||
+              firstWithConsent(a) !== firstWithConsent(rows[i - 1])
+            )
+              rank = i + 1;
             return {
               applicant_number: a.applicant_number,
               application_id: a.id,
