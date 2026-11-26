@@ -1,4 +1,4 @@
-"""Состав конкурсной суммы при ручном внесении результатов."""
+"""Состав конкурсной суммы при внесении результатов."""
 from .contract_fields import PROGRAM_CODE
 
 
@@ -32,3 +32,13 @@ def selected_scores(exams, groups):
             raise ValueError("Для этой программы нужен результат: " + " или ".join(alternatives))
         selected[subject] = exams[subject]
     return selected
+
+def inferred_total(direction, source, exams, achievements):
+    """Рассчитать итог только при известной программе и полном наборе результатов."""
+    groups = subject_groups(direction, source)
+    if not groups:
+        return None
+    try:
+        return sum(selected_scores(exams, groups).values()) + achievements
+    except ValueError:
+        return None

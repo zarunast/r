@@ -497,6 +497,7 @@ export function ApplicantCard({
                     <strong>
                       {a.total_score ||
                         (a.source?._snapshot_date &&
+                        !a.source._score_calculated &&
                         ![
                           "Сумма баллов",
                           "Итоговый балл",

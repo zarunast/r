@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 
 from .db import Database
 from .exam_policy import selected_scores, subject_groups
-from .importer import import_epgu
+from .importer import backfill_missing_scores, import_epgu
 from .models import Applicant, Application, Call, Contract, ContractEvent, Quota, SeatPlan, User, now
 from .security import ROLES, authenticate, decode_token, token_for
 from . import services as svc
@@ -161,6 +161,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         db.create_schema()
         from .seat_reference import seed_seat_plans
         with db.uow() as connection:
+            backfill_missing_scores(connection)
             seed_seat_plans(connection, 2026)
         yield
         db.engine.dispose()
@@ -298,9 +299,10 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         result = s.execute(update(Application).where(
             Application.id == item.id, Application.exams == item.exams,
             Application.total_score == item.total_score, Application.achievements == item.achievements,
-            Application.status == item.status,
+            Application.status == item.status, Application.source == item.source,
             Application.enrolled_at.is_(None),
-        ).values(exams=recorded, total_score=total))
+        ).values(exams=recorded, total_score=total,
+                 source={key: value for key, value in item.source.items() if key != "_score_calculated"}))
         if result.rowcount != 1:
             raise HTTPException(409, "Заявление уже изменено. Откройте карточку повторно.")
         return {"exams": recorded, "total_score": total}
@@ -421,6 +423,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
             obj.total_score = score_values(selected_scores(exams, groups) if groups else exams,
                                            values.get("achievements", obj.achievements))
             obj.exams = exams
+            obj.source = {key: value for key, value in obj.source.items() if key != "_score_calculated"}
         for k, v in values.items():
             setattr(obj, k, v)
         return model_dict(obj)

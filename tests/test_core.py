@@ -266,3 +266,29 @@ def test_sequential_epgu_snapshots_keep_history_and_final_status(db, tmp_path):
         assert unchanged.source["_missing_from_snapshot"] == "2026-09-01"
         ranked = svc.ranking(session, 2026, "ИТ", "бак", "Очная", "general")
         assert [item["applicant_number"] for item in ranked] == ["001"]
+
+
+def test_epgu_missing_totals_and_backfill(db, tmp_path):
+    from admissions.importer import backfill_missing_scores
+
+    technical = row("001", direction="15.03.04 Автоматизация", score=None)
+    technical[6:11] = [7, 64, 72, 65, 90]
+    incomplete = technical.copy()
+    incomplete[0], incomplete[9] = "002", None
+    official = technical.copy()
+    official[0], official[5] = "003", 200
+    path = excel(tmp_path / "applications.xlsx", [technical, incomplete, official])
+    assert not import_epgu(db, path, 2026).errors
+    with db.uow() as session:
+        apps = {app.applicant_number: app for app in session.scalars(select(Application))}
+        assert [apps[n].total_score for n in ("001", "002", "003")] == [208, 0, 200]
+        apps["001"].total_score = 0
+        apps["001"].source = {key: value for key, value in apps["001"].source.items() if key != "_score_calculated"}
+    with db.uow() as session:
+        backfill_missing_scores(session)
+        ranked = svc.ranking(session, 2026, technical[1], "бак", "Очная", "general")
+        assert [item["score"] for item in ranked] == [208, 200, 0]
+    official[5] = None
+    assert not import_epgu(db, excel(path, [official]), 2026).errors
+    with db.uow() as session:
+        assert session.scalar(select(Application).filter_by(applicant_number="003")).total_score == 200

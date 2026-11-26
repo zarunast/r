@@ -50,6 +50,7 @@ export function Rankings() {
   const catalog = useLoad<Group[]>(`/catalog/groups?year=${year}`);
   const [groupIndex, setGroupIndex] = useState(0);
   const [quota, setQuota] = useState<Quota>("general");
+  const [priority, setPriority] = useState("");
   const [plan, setPlan] = useState(false);
   const [reference, setReference] = useState(false);
   const [order, setOrder] = useState(false);
@@ -60,6 +61,12 @@ export function Rankings() {
     group ? `/rankings?${query}` : null,
   );
   const rows = data?.lists[quota] || [];
+  const priorities = [...new Set(rows.map((row) => row.priority))].sort(
+    (a, b) => a - b,
+  );
+  const filteredRows = priority
+    ? rows.filter((row) => String(row.priority) === priority)
+    : rows;
   const seatCount = data?.seats[quota];
   const boundary = seatCount ? rows[seatCount - 1]?.score : undefined;
   const exportRows = () =>
@@ -112,7 +119,10 @@ export function Rankings() {
         <GroupPicker
           groups={catalog.data || []}
           index={groupIndex}
-          onChange={setGroupIndex}
+          onChange={(index) => {
+            setGroupIndex(index);
+            setPriority("");
+          }}
         />
         <button
           className="button"
@@ -170,7 +180,10 @@ export function Rankings() {
               <button
                 key={key}
                 className={quota === key ? "active" : ""}
-                onClick={() => setQuota(key)}
+                onClick={() => {
+                  setQuota(key);
+                  setPriority("");
+                }}
               >
                 {label}
                 <span>{data?.lists[key]?.length || 0}</span>
@@ -178,6 +191,29 @@ export function Rankings() {
             ),
           )}
         </div>
+        {!!rows.length && (
+          <div className="filter-bar">
+            <label className="field">
+              Приоритет заявления
+              <select
+                value={priority}
+                onChange={(event) => setPriority(event.target.value)}
+              >
+                <option value="">Все приоритеты</option>
+                {priorities.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {priority && (
+              <span className="muted">
+                Показано {filteredRows.length} из {rows.length}
+              </span>
+            )}
+          </div>
+        )}
         {error ? (
           <ErrorState error={error} />
         ) : loading || catalog.loading ? (
@@ -186,6 +222,11 @@ export function Rankings() {
           <Empty
             title="В этой категории пока нет заявлений"
             text="Выберите другую конкурсную группу или категорию."
+          />
+        ) : !filteredRows.length ? (
+          <Empty
+            title="Нет заявлений с этим приоритетом"
+            text="Выберите другой приоритет или сбросьте фильтр."
           />
         ) : (
           <div className="table-scroll">
@@ -202,7 +243,7 @@ export function Rankings() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {filteredRows.map((row) => (
                   <tr key={row.application_id}>
                     <td className="center">
                       <span

@@ -116,9 +116,30 @@ def application_key(obj):
     return tuple(get(k) for k in ("applicant_number", "year", "campaign", "direction", "study_form", "quota"))
 
 
+def has_imported_total(source):
+    return any(text(value) and REVERSE.get(normalize(key)) == "total_score"
+               for key, value in source.items())
+
+
+def backfill_missing_scores(session):
+    """Восстановить итоги у заявлений, импортированных прежней версией."""
+    from .exam_policy import inferred_total
+
+    for app in session.scalars(select(Application).where(Application.total_score == 0).execution_options(yield_per=500)):
+        if (has_imported_total(app.source) or app.source.get("_score_calculated")
+                or not any(REVERSE.get(normalize(key)) == "number" for key in app.source)):
+            continue
+        total = inferred_total(app.direction, app.source, app.exams, app.achievements)
+        if total is not None:
+            app.total_score = total
+            app.source = {**app.source, "_score_calculated": True}
+
+
 def read_epgu(path, year, sheet=None):
     if not 2000 <= year <= 2100:
         raise ValueError("Укажите год приемной кампании (2000–2100)")
+    from .exam_policy import inferred_total
+
     report = ImportReport()
     workbook = load_workbook(path, read_only=True, data_only=True)
     parsed = []
@@ -184,6 +205,11 @@ def read_epgu(path, year, sheet=None):
                            achievements=integer(get("achievements", 0) or 0, "Общие ИД", 0, 100),
                            exams={k: integer(v, k, 0, 100) for k, v in raw.items() if k in EXAMS and v},
                            consent=boolean(get("consent", False)), source=raw)
+                if not has_imported_total(raw):
+                    estimate = inferred_total(app["direction"], raw, app["exams"], app["achievements"])
+                    if estimate is not None:
+                        app["total_score"] = estimate
+                        raw["_score_calculated"] = True
                 if any(not app[k] for k in ("campaign", "direction", "study_form")):
                     raise ValueError("Не заполнены направление, форма или кампания")
                 key = application_key(app)
@@ -205,7 +231,8 @@ def read_epgu(path, year, sheet=None):
         if "total_score" in positions:
             report.warnings.append("Сумма баллов взята из итогового столбца; альтернативные экзамены не суммируются.")
         else:
-            report.warnings.append("В книге нет столбца «Сумма баллов». Уже сохранённые итоги сохранены, новые итоги ожидают выгрузку с баллами.")
+            report.warnings.append("В книге нет столбца «Сумма баллов». Готовые итоги, ранее сохранённые в системе, сохраняются.")
+        report.warnings.append("Если итоговая ячейка отсутствует или пуста, сумма рассчитывается по программе при наличии всех нужных оценок.")
         if duplicates:
             report.warnings.append(f"Повторные строки одного заявления: {duplicates}. Принят статус последней строки, остальные поля совпадают.")
         report.warnings.append("Выгрузка обновляет присутствующие заявления; отсутствующие автоматически не удаляются.")
@@ -287,9 +314,18 @@ def import_epgu(db, path, year, sheet=None, *, filename=None):
             else:
                 prior_source = existing.source
                 current_source = values["source"]
-                if not any(REVERSE.get(normalize(key)) == "total_score" for key in current_source):
-                    values["total_score"] = existing.total_score
                 values["source"] = {**prior_source, **current_source}
+                if has_imported_total(current_source):
+                    values["source"].pop("_score_calculated", None)
+                elif (has_imported_total(prior_source) or
+                      (existing.total_score and not prior_source.get("_score_calculated"))):
+                    values["total_score"] = existing.total_score
+                    values["source"].pop("_score_calculated", None)
+                    for key, value in prior_source.items():
+                        if REVERSE.get(normalize(key)) == "total_score" and text(value):
+                            values["source"][key] = value
+                elif not current_source.get("_score_calculated"):
+                    values["source"].pop("_score_calculated", None)
                 if snapshot:
                     values["source"].pop("_missing_from_snapshot", None)
                 if existing.status != values["status"] and not existing.enrolled_at:
