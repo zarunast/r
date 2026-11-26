@@ -2,10 +2,10 @@
 import re
 
 from fastapi import Depends, Query
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, select
 
 from .models import Application, Quota, SeatPlan
-from .services import ACTIVE
+from .services import ACTIVE, current_application
 
 
 def attach_portal(app, session):
@@ -25,7 +25,7 @@ def attach_portal(app, session):
 
         rows = s.execute(select(
             Application.direction, Application.campaign, Application.study_form, Application.quota,
-            func.sum(case((Application.status.in_(ACTIVE), 1), else_=0)),
+            func.sum(case((and_(Application.status.in_(ACTIVE), current_application()), 1), else_=0)),
             func.min(Application.source["Обр.программа"].as_string()),
             func.min(Application.source["НПС/УГСН"].as_string()),
         ).where(Application.year == year).group_by(

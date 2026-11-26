@@ -239,7 +239,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
     def exam_gradebook(year: int = Query(ge=2000, le=2100), q: str = Query("", max_length=200),
                        page: int = Query(0, ge=0, le=10000), s=Depends(session)):
         name = func.trim(Applicant.surname + " " + Applicant.first_name + " " + Applicant.patronymic)
-        filters = [Application.year == year, Application.status.not_in(("withdrawn", "rejected"))]
+        filters = [Application.year == year, Application.status.not_in(svc.CLOSED), svc.current_application()]
         for term in q.lower().replace("ё", "е").split():
             filters.append(or_(func.replace(func.lower(name), "ё", "е").contains(term, autoescape=True),
                                Applicant.number == term))
@@ -251,7 +251,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
             "name": " ".join(filter(None, [person.surname, person.first_name, person.patronymic])),
             "direction": app.direction, "study_form": app.study_form, "quota": app.quota,
             "exams": app.exams, "total_score": app.total_score, "achievements": app.achievements,
-            "enrolled_at": app.enrolled_at, "subjects": subject_groups(app.direction, app.source),
+            "enrolled_at": app.enrolled_at, "locked": app.status in svc.FINAL_ENROLLMENT, "subjects": subject_groups(app.direction, app.source),
         } for app, person in rows[:25]]}
 
     @app.get("/exam-review/applicants", dependencies=examiner)
@@ -282,7 +282,9 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
     @app.put("/exam-review/applications/{application_id}/scores", dependencies=examiner)
     def save_exam_result(application_id: int, body: ExamResult, s=Depends(session)):
         item = svc.require(s, Application, application_id)
-        if item.enrolled_at:
+        if item.source.get("_missing_from_snapshot"):
+            raise HTTPException(409, "Заявление отсутствует в актуальной выгрузке")
+        if item.status in svc.FINAL_ENROLLMENT or item.enrolled_at:
             raise HTTPException(409, "Заявление уже зачислено")
         exams = {name.strip(): score for name, score in body.exam_scores.items()}
         if len(exams) != len(body.exam_scores) or any(not name or len(name) > 120 for name in exams):
@@ -296,6 +298,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         result = s.execute(update(Application).where(
             Application.id == item.id, Application.exams == item.exams,
             Application.total_score == item.total_score, Application.achievements == item.achievements,
+            Application.status == item.status,
             Application.enrolled_at.is_(None),
         ).values(exams=recorded, total_score=total))
         if result.rowcount != 1:
@@ -324,7 +327,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
     @app.post("/imports/epgu", dependencies=private)
     def epgu(year: int = Query(ge=2000, le=2100), sheet: str | None = None, file: UploadFile = File()):
         with upload_path(file, ".xlsx") as path:
-            return import_epgu(db, path, year, sheet).as_dict()
+            return import_epgu(db, path, year, sheet, filename=file.filename).as_dict()
 
     @app.get("/applicants", dependencies=private)
     def applicants(q: str = "", year: int | None = None, contract_number: str | None = None,
@@ -352,10 +355,16 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
     @app.get("/applicants/{number}", dependencies=private)
     def applicant(number: str, s=Depends(session)):
         person = svc.require(s, Applicant, number)
-        apps = s.scalars(select(Application).where(Application.applicant_number == number)).all()
-        contracts = s.scalars(select(Contract).join(Application).where(Application.applicant_number == number)).all()
+        application_scope = Application.applicant_number == number
+        apps = s.scalars(select(Application).where(application_scope).order_by(
+            Application.year.desc(), Application.priority, Application.id)).all()
+        contracts = s.scalars(select(Contract).join(Application).where(application_scope)
+                              .order_by(Contract.created_at.desc(), Contract.id.desc())).all()
+        calls = s.scalars(select(Call).join(Application).where(application_scope)
+                          .order_by(Call.at.desc(), Call.id.desc()))
         return {**model_dict(person), "applications": [model_dict(a) for a in apps],
-                "contracts": [model_dict(c) for c in contracts]}
+                "contracts": [model_dict(c) for c in contracts],
+                "calls": [model_dict(c) for c in calls]}
 
     @app.patch("/applicants/{number}", dependencies=private)
     def edit_applicant(number: str, body: ApplicantPatch, s=Depends(session)):
@@ -401,7 +410,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
     def edit_application(application_id: int, body: ApplicationPatch, s=Depends(session)):
         obj = svc.require(s, Application, application_id)
         values = body.model_dump(exclude_none=True)
-        if obj.enrolled_at and values:
+        if (obj.status in svc.FINAL_ENROLLMENT or obj.enrolled_at) and values:
             raise ValueError("Зачисленное заявление нельзя менять без отмены приказа в отдельной процедуре")
         if "achievements" in values and "exam_scores" not in values:
             raise ValueError("Для пересчёта ИД передайте выбранные exam_scores: в Excel есть альтернативные экзамены")
@@ -533,10 +542,10 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
     @app.post("/applications/{application_id}/enroll", dependencies=private)
     def enroll(application_id: int, body: EnrollmentData, s=Depends(session)):
         obj = svc.require(s, Application, application_id)
-        if obj.status not in svc.ACTIVE or obj.enrolled_at:
+        if obj.status not in svc.ELIGIBLE or obj.enrolled_at or obj.source.get("_missing_from_snapshot"):
             raise ValueError("Заявление не участвует в конкурсе или уже зачислено")
         other = s.scalar(select(Application).where(Application.applicant_number == obj.applicant_number,
-                         Application.year == obj.year, Application.campaign == obj.campaign, Application.status == "enrolled"))
+                         Application.year == obj.year, Application.campaign == obj.campaign, Application.status.in_(svc.FINAL_ENROLLMENT)))
         if other:
             raise ValueError("Абитуриент уже зачислен в этой кампании")
         if obj.quota == Quota.PAID.value:

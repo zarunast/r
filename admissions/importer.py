@@ -24,10 +24,10 @@ ALIASES = {
     "total_score": ["Сумма баллов", "Итоговый балл", "Суммарный балл"],
     "achievements": ["Общие ИД", "Баллы ИД", "Индивидуальные достижения"],
     "surname": ["Фамилия"], "first_name": ["Имя"], "patronymic": ["Отчество"],
-    "priority": ["Приоритет"], "status": ["Статус"], "consent": ["Согласие"],
+    "priority": ["Приоритет"], "status": ["Статус"], "consent": ["Согласие", "Наличие согласия"],
 }
 REVERSE = {normalize(alias): name for name, aliases in ALIASES.items() for alias in aliases}
-REQUIRED = {"number", "direction", "campaign", "study_form", "category", "total_score"}
+REQUIRED = {"number", "direction", "campaign", "study_form", "category"}
 EXAMS = {
     "Математика", "Прикладная математика", "Информатика", "Прикладная информатика",
     "Физика", "Химия", "Механика", "Основы электротехники и электроники",
@@ -36,6 +36,8 @@ EXAMS = {
 }
 STATUS = {normalize(k): v for k, v in {
     "Участвует в конкурсе": "participating", "На рассмотрении": "pending",
+    "Новое": "new", "Не прошло по конкурсу": "not_competitive",
+    "Включено в приказ на зачисление": "in_enrollment_order", "Отказ от зачисления": "declined",
     "Принято": "accepted", "Зачислен": "enrolled", "Зачислена": "enrolled",
     "Отозвано": "withdrawn", "Отозван": "withdrawn", "Отклонено": "rejected",
 }.items()}
@@ -99,6 +101,9 @@ class ImportReport:
     new_applications: int = 0
     updated_applications: int = 0
     unchanged_applications: int = 0
+    statuses: dict = field(default_factory=dict)
+    status_changes: int = 0
+    absent_applications: int = 0
     errors: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
 
@@ -118,9 +123,17 @@ def read_epgu(path, year, sheet=None):
     workbook = load_workbook(path, read_only=True, data_only=True)
     parsed = []
     try:
-        if sheet is None and len(workbook.sheetnames) != 1:
-            raise ValueError("В книге несколько листов: укажите sheet явно")
-        ws = workbook[sheet] if sheet else workbook.active
+        if sheet and sheet not in workbook.sheetnames:
+            raise ValueError("Указанный лист отсутствует в книге")
+        candidates = [workbook[sheet]] if sheet else [
+            ws for ws in workbook if any(
+                REQUIRED.issubset({REVERSE.get(normalize(cell)) for cell in row})
+                for row in ws.iter_rows(max_row=20, values_only=True)
+            )
+        ]
+        if len(candidates) != 1:
+            raise ValueError("Нужен один лист заявлений. Если их несколько, укажите sheet явно")
+        ws = candidates[0]
         rows = ws.iter_rows(values_only=True)
         header = None
         for line, row in enumerate(rows, 1):
@@ -137,7 +150,8 @@ def read_epgu(path, year, sheet=None):
                 break
         if header is None:
             raise ValueError("Не найдена строка заголовков. Нужны: " + ", ".join(sorted(REQUIRED)))
-        seen = set()
+        seen = {}
+        duplicates = 0
         for line, row in enumerate(rows, header_line + 1):
             if all(v is None for v in row):
                 continue
@@ -155,7 +169,8 @@ def read_epgu(path, year, sheet=None):
                             "ДУЛ", "Серия", "Номер", "Страна выдачи", "Дата выдачи",
                             "Тип документа ОУ", "Дата выдачи ОУ", "Организация, выдавшая документ ОУ",
                             "Наличие ОУ", "Документы доп.", "Необходимость в общежитии"}
-                profile = {k: v for k, v in raw.items() if k in personal or normalize(k) in ADDRESS_HEADERS}
+                profile = {k: v for k, v in raw.items() if k in personal or normalize(k) in ADDRESS_HEADERS
+                           or k.endswith((" посл", " пред"))}
                 applicant = {"number": number, "surname": text(get("surname")),
                              "first_name": text(get("first_name")), "patronymic": text(get("patronymic")),
                              "profile": profile}
@@ -165,7 +180,7 @@ def read_epgu(path, year, sheet=None):
                 app = dict(applicant_number=number, year=year, campaign=text(get("campaign")),
                            direction=text(get("direction")), study_form=text(get("study_form")),
                            quota=quota_for(get("category")), priority=integer(get("priority", 1), "Приоритет", 1, 100),
-                           status=STATUS[status_raw], total_score=integer(get("total_score"), "Сумма баллов"),
+                           status=STATUS[status_raw], total_score=integer(get("total_score") or 0, "Сумма баллов"),
                            achievements=integer(get("achievements", 0) or 0, "Общие ИД", 0, 100),
                            exams={k: integer(v, k, 0, 100) for k, v in raw.items() if k in EXAMS and v},
                            consent=boolean(get("consent", False)), source=raw)
@@ -173,23 +188,53 @@ def read_epgu(path, year, sheet=None):
                     raise ValueError("Не заполнены направление, форма или кампания")
                 key = application_key(app)
                 if key in seen:
-                    raise ValueError("Повтор заявления в одном файле")
-                seen.add(key)
-                parsed.append((applicant, app))
+                    previous_person, previous_app = parsed[seen[key]]
+                    if previous_app["source"] == raw:
+                        raise ValueError("Повтор заявления в одном файле")
+                    old_raw = {**previous_app["source"], "Статус": raw.get("Статус")}
+                    if previous_person != applicant or old_raw != raw:
+                        raise ValueError("Повтор заявления с различающимися данными")
+                    duplicates += 1
+                    parsed[seen[key]] = (applicant, app)
+                else:
+                    seen[key] = len(parsed)
+                    parsed.append((applicant, app))
             except ValueError as error:
                 report.errors.append({"sheet": ws.title, "row": line, "error": str(error)})
-        report.warnings.append("Сумма баллов взята из итогового столбца; альтернативные экзамены не суммируются.")
+        report.statuses = dict(Counter(app["status"] for _, app in parsed))
+        if "total_score" in positions:
+            report.warnings.append("Сумма баллов взята из итогового столбца; альтернативные экзамены не суммируются.")
+        else:
+            report.warnings.append("В книге нет столбца «Сумма баллов». Уже сохранённые итоги сохранены, новые итоги ожидают выгрузку с баллами.")
+        if duplicates:
+            report.warnings.append(f"Повторные строки одного заявления: {duplicates}. Принят статус последней строки, остальные поля совпадают.")
         report.warnings.append("Выгрузка обновляет присутствующие заявления; отсутствующие автоматически не удаляются.")
         return parsed, report
     finally:
         workbook.close()
 
 
-def import_epgu(db, path, year, sheet=None):
+def snapshot_date(filename):
+    match = re.search(r"(?<![0-9])([0-9]{8})(?![0-9])", Path(filename).stem)
+    if match:
+        try:
+            return datetime.strptime(match[1], "%Y%m%d").date().isoformat()
+        except ValueError:
+            pass
+    return ""
+
+
+def import_epgu(db, path, year, sheet=None, *, filename=None):
     parsed, report = read_epgu(path, year, sheet)
+    snapshot = snapshot_date(filename or path)
     with db.uow() as session:
+        session.connection().exec_driver_sql("BEGIN IMMEDIATE")
         applicants = {a.number: a for a in session.scalars(select(Applicant))}
         applications = {application_key(a): a for a in session.scalars(select(Application).where(Application.year == year))}
+        newest = max((app.source.get("_snapshot_date", "") for app in applications.values()), default="")
+        if snapshot and snapshot < newest:
+            report.warnings.append(f"Книга от {snapshot} старше загруженной выгрузки от {newest}. Данные не изменены.")
+            return report
         updated = set()
         fresh = set()
         desired = {}
@@ -198,9 +243,12 @@ def import_epgu(db, path, year, sheet=None):
             previous = desired.get(values["number"])
             if previous and previous != values:
                 conflicts.add(values["number"])
+            if previous:
+                values = {**previous, **{k: v for k, v in values.items() if k != "profile" and v},
+                          "profile": {**previous["profile"], **{k: v for k, v in values["profile"].items() if v}}}
             desired[values["number"]] = values
         if conflicts:
-            report.warnings.append(f"У {len(conflicts)} абитуриентов различаются персональные поля в строках; использована последняя строка файла.")
+            report.warnings.append(f"У {len(conflicts)} абитуриентов различаются персональные поля в строках; использованы последние непустые значения.")
         for values in desired.values():
             number = values["number"]
             existing = applicants.get(number)
@@ -211,20 +259,43 @@ def import_epgu(db, path, year, sheet=None):
                 fresh.add(number)
             else:
                 # Локальные поля (например, родитель) сохраняются при ежедневном импорте.
-                values = {**values, "profile": {**existing.profile, **values["profile"]}}
+                values = {**values, "profile": {**existing.profile, **{k: v for k, v in values["profile"].items() if v}}}
+                for key in ("surname", "first_name", "patronymic"):
+                    values[key] = values[key] or getattr(existing, key)
                 if any(getattr(existing, k) != v for k, v in values.items()):
                     for k, v in values.items():
                         setattr(existing, k, v)
                     existing.updated_at = now()
                     updated.add(number)
         session.flush()
+        imported_keys = {application_key(values) for _, values in parsed}
+        if snapshot and not report.errors:
+            scopes = {(values["campaign"], values["study_form"]) for _, values in parsed}
+            for key, app in applications.items():
+                if (key not in imported_keys and app.source.get("_snapshot_date") and
+                        app.source["_snapshot_date"] < snapshot and (app.campaign, app.study_form) in scopes):
+                    report.absent_applications += 1
+                    app.source = {**app.source, "_missing_from_snapshot": snapshot}
         for _, values in parsed:
             key = application_key(values)
+            if snapshot:
+                values["source"]["_snapshot_date"] = snapshot
             existing = applications.get(key)
             if existing is None:
                 session.add(Application(**values))
                 report.new_applications += 1
             else:
+                prior_source = existing.source
+                current_source = values["source"]
+                if not any(REVERSE.get(normalize(key)) == "total_score" for key in current_source):
+                    values["total_score"] = existing.total_score
+                values["source"] = {**prior_source, **current_source}
+                if snapshot:
+                    values["source"].pop("_missing_from_snapshot", None)
+                if existing.status != values["status"] and not existing.enrolled_at:
+                    report.status_changes += 1
+                    values["source"]["_previous_status"] = existing.status
+                    values["source"]["_previous_snapshot_date"] = prior_source.get("_snapshot_date", "")
                 # Приказ о зачислении — локальное действие, его не отменяет старый Excel.
                 if existing.enrolled_at:
                     values = {**values, "status": "enrolled", "source": {

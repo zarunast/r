@@ -214,7 +214,9 @@ function CreateContract({ onClose }: { onClose: () => void }) {
         a.year === year &&
         a.quota === "paid" &&
         !person.contracts.some((c) => c.application_id === a.id) &&
-        !["withdrawn", "rejected"].includes(a.status),
+        !["withdrawn", "rejected", "declined", "not_competitive"].includes(
+          a.status,
+        ),
     ) || [];
   return (
     <Modal

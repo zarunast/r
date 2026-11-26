@@ -224,3 +224,45 @@ def test_lan_guard(tmp_path):
     with TestClient(app, client=("203.0.113.10", 12345)) as client:
         assert client.post("/auth/token", data={"username": "x", "password": "x"}).status_code == 403
         assert client.get("/health").status_code == 200
+
+
+def test_sequential_epgu_snapshots_keep_history_and_final_status(db, tmp_path):
+    early = row("001")
+    early[-1] = "Новое"
+    early[-2] = "True"
+    absent = row("002")
+    early_headers = HEADERS[:5] + HEADERS[6:-2] + ["Наличие согласия", "Статус"]
+    july = excel(tmp_path / "PK_20260717.xlsx",
+                 [application[:5] + application[6:] for application in (early, absent)], early_headers)
+    first = import_epgu(db, july, 2026)
+    assert not first.errors and first.new_applications == 2
+    with db.uow() as session:
+        application = session.scalar(select(Application).filter_by(applicant_number="001"))
+        assert application.status == "new" and application.consent and application.total_score == 0
+
+    first_status = row("001", score=260)
+    first_status[13] = None
+    first_status[-1] = "Не прошло по конкурсу"
+    final_status = [*first_status[:-1], "Включено в приказ на зачисление "]
+    september = excel(tmp_path / "DO_20260901.xlsx",
+                      [first_status + ["Диплом"], final_status + ["Диплом"]],
+                      HEADERS + ["Тип документа посл"])
+    book = load_workbook(september)
+    book.create_sheet("Справочный лист").append(["Математика", "Информатика"])
+    book.save(september)
+    last = import_epgu(db, september, 2026)
+    assert not last.errors and last.statuses == {"in_enrollment_order": 1}
+    assert last.absent_applications == last.status_changes == last.updated_applications == 1
+    assert import_epgu(db, september, 2026).unchanged_applications == 1
+    assert import_epgu(db, july, 2026).updated_applications == 0
+    with db.uow() as session:
+        application = session.scalar(select(Application).filter_by(applicant_number="001"))
+        assert application.status == "in_enrollment_order" and application.enrolled_at is None
+        assert application.total_score == 260 and application.source["_previous_status"] == "new"
+        assert session.get(Applicant, "001").profile["Телефон"] == "+70000000000"
+        assert session.get(Applicant, "001").profile["Тип документа посл"] == "Диплом"
+        unchanged = session.scalar(select(Application).filter_by(applicant_number="002"))
+        assert unchanged.status == "participating"
+        assert unchanged.source["_missing_from_snapshot"] == "2026-09-01"
+        ranked = svc.ranking(session, 2026, "ИТ", "бак", "Очная", "general")
+        assert [item["applicant_number"] for item in ranked] == ["001"]

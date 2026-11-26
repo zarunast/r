@@ -15,7 +15,10 @@ from .importer import integer, normalize, text
 from .models import Applicant, Application, Call, Contract, ContractEvent, Quota, SeatPlan, now
 
 
-ACTIVE = ("participating", "accepted", "enrolled")
+ELIGIBLE = ("participating", "accepted")
+FINAL_ENROLLMENT = ("enrolled", "in_enrollment_order")
+CLOSED = ("withdrawn", "rejected", "declined", "not_competitive")
+ACTIVE = ELIGIBLE + FINAL_ENROLLMENT
 LOCATIONS = {"admissions", "applicant", "accounting", "archive"}
 TRANSITIONS = {
     "draft": {"issued", "cancelled"}, "issued": {"signed", "cancelled"},
@@ -47,9 +50,13 @@ def group_query(year, direction=None, campaign=None, study_form=None, quota=None
     return q
 
 
+def current_application():
+    return Application.source["_missing_from_snapshot"].as_string().is_(None)
+
+
 def ranking(session, year, direction, campaign, study_form, quota, *, public_flags=False):
     """Ничьи разрешаются номером для стабильности; это не правило приказа о зачислении."""
-    q = group_query(year, direction, campaign, study_form, quota).where(Application.status.in_(ACTIVE))
+    q = group_query(year, direction, campaign, study_form, quota).where(Application.status.in_(ACTIVE), current_application())
     rows = session.scalars(q.order_by(Application.total_score.desc(), Application.applicant_number)).all()
     result = []
     previous = None
@@ -105,7 +112,7 @@ def create_contract(session, application_id, number, actor):
     app = require(session, Application, application_id)
     if app.quota != Quota.PAID.value:
         raise ValueError("Договор доступен только для платного заявления")
-    if app.status in {"withdrawn", "rejected"}:
+    if app.status in CLOSED:
         raise ValueError("Заявление отозвано или отклонено")
     if session.scalar(select(Contract).where((Contract.number == number) | (Contract.application_id == application_id))):
         raise ValueError("Договор с таким номером или для этого заявления уже существует")
@@ -191,7 +198,7 @@ def call_queue(session, year, change_deadline, payment_deadline, today=None):
         reasons.append("payment_deadline")
     if not reasons:
         return []
-    apps = session.scalars(group_query(year, quota=Quota.PAID.value).where(Application.status.in_(ACTIVE)))
+    apps = session.scalars(group_query(year, quota=Quota.PAID.value).where(Application.status.in_(ELIGIBLE), current_application()))
     contracts = {c.application_id: c for c in session.scalars(select(Contract).join(Application).where(Application.year == year))}
     last_calls = {}
     for call in session.scalars(select(Call).join(Application).where(Application.year == year).order_by(Call.at, Call.id)):
@@ -224,7 +231,7 @@ def statistics(session, year):
                                    .group_by(Application.status)).all())
     active_counts = {(d, c, f, q): count for d, c, f, q, count in session.execute(
         select(Application.direction, Application.campaign, Application.study_form, Application.quota, func.count())
-        .where(Application.year == year, Application.status.in_(ACTIVE))
+        .where(Application.year == year, Application.status.in_(ACTIVE), current_application())
         .group_by(Application.direction, Application.campaign, Application.study_form, Application.quota))}
     return {"year": year, "applications": sum(statuses.values()), "statuses": statuses,
             "applicants": session.scalar(select(func.count(func.distinct(Application.applicant_number))).where(Application.year == year)),
@@ -265,20 +272,20 @@ def enrollment_draft(session, group, ids, number, order_date, enrolled_at):
     if plan is None:
         raise ValueError("Сначала укажите количество мест для этой категории")
     candidates = session.scalars(group_query(**conditions, quota=quota).where(
-        Application.id.in_(ids), Application.status.in_(("participating", "accepted")),
+        Application.id.in_(ids), Application.status.in_(ELIGIBLE), current_application(),
     ).order_by(Application.total_score.desc(), Application.applicant_number)).all()
     if len(candidates) != len(set(ids)):
         raise ValueError("Выберите действующие заявления из одного конкурсного списка")
     if len(candidates) != len({item.applicant_number for item in candidates}):
         raise ValueError("У одного абитуриента несколько выбранных заявлений")
     used = session.scalar(select(func.count()).select_from(group_query(**conditions, quota=quota).where(
-        Application.status == "enrolled").subquery()))
+        Application.status.in_(FINAL_ENROLLMENT)).subquery()))
     if len(candidates) + used > plan.seats:
         raise ValueError("Выбрано больше заявлений, чем осталось мест")
     already = session.scalar(select(Application.id).where(
         Application.year == group.year, Application.campaign == group.campaign,
         Application.applicant_number.in_([item.applicant_number for item in candidates]),
-        Application.status == "enrolled").limit(1))
+        Application.status.in_(FINAL_ENROLLMENT)).limit(1))
     if already is not None:
         raise ValueError("Среди выбранных есть уже зачисленный абитуриент этой кампании")
     if quota == "paid":

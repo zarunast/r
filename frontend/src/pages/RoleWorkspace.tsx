@@ -67,6 +67,7 @@ type GradeRow = {
   total_score: number;
   achievements: number;
   enrolled_at: string | null;
+  locked: boolean;
 };
 
 const standardSubjects = [
@@ -132,7 +133,7 @@ function GradebookRow({ row, columns }: { row: GradeRow; columns: string[] }) {
           row.subjects.length === 0 || row.subjects.flat().includes(name);
         return (
           <td key={name}>
-            {allowed && !row.enrolled_at ? (
+            {allowed && !row.enrolled_at && !row.locked ? (
               <input
                 aria-label={`${row.name} · ${name}`}
                 type="number"
@@ -159,7 +160,7 @@ function GradebookRow({ row, columns }: { row: GradeRow; columns: string[] }) {
       <td>{row.achievements}</td>
       <td>{result.total_score}</td>
       <td>
-        {row.enrolled_at ? (
+        {row.enrolled_at || row.locked ? (
           "Зачислен"
         ) : (
           <button

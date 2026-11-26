@@ -66,8 +66,17 @@ export type PersonDetail = Omit<
   "phone" | "email" | "applications_count" | "best_score"
 > & {
   profile: Record<string, unknown>;
+  updated_at?: string;
   applications: Application[];
   contracts: Contract[];
+  calls?: {
+    id: number;
+    application_id: number;
+    result: string;
+    comment: string;
+    actor: string;
+    at: string;
+  }[];
 };
 export type Rank = {
   paid_registered?: boolean;
@@ -128,6 +137,9 @@ export type ImportReport = {
   updated_applicants: number;
   new_applications: number;
   updated_applications: number;
+  statuses?: Record<string, number>;
+  status_changes?: number;
+  absent_applications?: number;
   errors: { row: number; error: string }[];
   warnings: string[];
 };
@@ -153,6 +165,10 @@ export const locationLabels: Record<string, string> = {
   archive: "Архив",
 };
 export const statusLabels: Record<string, string> = {
+  new: "Новое",
+  not_competitive: "Не прошло по конкурсу",
+  in_enrollment_order: "Включено в приказ на зачисление",
+  declined: "Отказ от зачисления",
   participating: "В конкурсе",
   pending: "На рассмотрении",
   accepted: "Принято",

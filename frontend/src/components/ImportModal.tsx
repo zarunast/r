@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { CheckCircle2, FileSpreadsheet, UploadCloud, X } from "lucide-react";
 import { useStore } from "../store";
 import type { ImportReport } from "../types";
-import { numberFormat } from "../types";
+import { numberFormat, statusLabels } from "../types";
 import { ErrorState, Modal, SaveButton } from "./ui";
 
 export function ImportModal({
@@ -91,6 +91,28 @@ export function ImportModal({
               </>
             )}
           </div>
+          {"new_applicants" in report && report.statuses && (
+            <details>
+              <summary>
+                Статусы в файле · изменилось{" "}
+                {numberFormat(report.status_changes ?? 0)}
+              </summary>
+              <ul>
+                {Object.entries(report.statuses).map(([status, count]) => (
+                  <li key={status}>
+                    {statusLabels[status] ?? status} · {numberFormat(count)}
+                  </li>
+                ))}
+              </ul>
+              {!!report.absent_applications && (
+                <p>
+                  Заявлений, отсутствующих в новой выгрузке:{" "}
+                  {numberFormat(report.absent_applications)}. Сохранён последний
+                  известный статус.
+                </p>
+              )}
+            </details>
+          )}
           {"warnings" in report &&
             report.warnings.map((w) => (
               <p className="notice-inline" key={w}>

@@ -2,8 +2,6 @@ import { useState, type FormEvent } from "react";
 import {
   ArrowUpRight,
   Check,
-  Mail,
-  Phone,
   Plus,
   Search,
   SlidersHorizontal,
@@ -12,6 +10,7 @@ import {
 } from "lucide-react";
 import { jsonBody, useDebounce, useLoad, useStore } from "../store";
 import {
+  callLabels,
   fullName,
   initials,
   numberFormat,
@@ -258,6 +257,35 @@ export function Registry({ onImport }: { onImport: () => void }) {
   );
 }
 
+const basicProfile = [
+  "Пол",
+  "Дата рождения",
+  "Место рождения",
+  "Телефон",
+  "Почта",
+  "СНИЛС",
+];
+const identityFields = [
+  "ДУЛ",
+  "Серия",
+  "Номер",
+  "Страна выдачи",
+  "Дата выдачи",
+  "Кем выдан",
+];
+const educationFields = [
+  "Тип документа ОУ",
+  "Дата выдачи ОУ",
+  "Организация, выдавшая документ ОУ",
+  "Наличие ОУ",
+];
+
+function cardDate(value: string) {
+  return new Date(
+    /(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value : value + "Z",
+  ).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" });
+}
+
 function ApplicantFields({ fields }: { fields: Record<string, unknown> }) {
   return (
     <dl className="detail-list">
@@ -289,6 +317,25 @@ export function ApplicantCard({
   );
   const [tab, setTab] = useState("profile");
   const [edit, setEdit] = useState(false);
+  const profile = data?.profile ?? {};
+  const known = [
+    ...basicProfile,
+    ...identityFields,
+    ...educationFields,
+    "Документы доп.",
+  ];
+  const pick = (keys: string[]) =>
+    Object.fromEntries(keys.map((key) => [key, profile[key]]));
+  const address = Object.keys(profile).filter((key) => /^адрес/i.test(key));
+  const extra = Object.fromEntries(
+    Object.entries(profile).filter(
+      ([key]) =>
+        !known.includes(key) &&
+        !address.includes(key) &&
+        !key.endsWith(" посл") &&
+        !key.endsWith(" пред"),
+    ),
+  );
   return (
     <Modal
       title="Карточка абитуриента"
@@ -336,44 +383,38 @@ export function ApplicantCard({
             >
               Документы
             </button>
+            <button
+              className={tab === "contracts" ? "active" : ""}
+              onClick={() => setTab("contracts")}
+            >
+              Договоры<span>{data.contracts.length}</span>
+            </button>
+            <button
+              className={tab === "calls" ? "active" : ""}
+              onClick={() => setTab("calls")}
+            >
+              Звонки<span>{data.calls?.length ?? 0}</span>
+            </button>
           </div>
           {edit ? (
             <EditApplicant person={data} onDone={() => setEdit(false)} />
           ) : tab === "profile" ? (
-            <dl className="detail-grid">
-              <div>
-                <dt>Фамилия</dt>
-                <dd>{data.surname || "—"}</dd>
-              </div>
-              <div>
-                <dt>Имя и отчество</dt>
-                <dd>
-                  {data.first_name} {data.patronymic}
-                </dd>
-              </div>
-              <div>
-                <dt>
-                  <Phone size={14} />
-                  Телефон
-                </dt>
-                <dd>{String(data.profile["Телефон"] || "Не указан")}</dd>
-              </div>
-              <div>
-                <dt>
-                  <Mail size={14} />
-                  Электронная почта
-                </dt>
-                <dd>{String(data.profile["Почта"] || "Не указана")}</dd>
-              </div>
-              <div>
-                <dt>Дата рождения</dt>
-                <dd>{String(data.profile["Дата рождения"] || "Не указана")}</dd>
-              </div>
-              <div>
-                <dt>СНИЛС</dt>
-                <dd>{String(data.profile["СНИЛС"] || "Не указан")}</dd>
-              </div>
-            </dl>
+            <>
+              <ApplicantFields
+                fields={{
+                  ФИО: fullName(data),
+                  ...pick(basicProfile),
+                  ...pick(address.length ? address : ["Адрес"]),
+                  Обновлено: data.updated_at ? cardDate(data.updated_at) : "—",
+                }}
+              />
+              {Object.keys(extra).length > 0 && (
+                <section>
+                  <h4>Другие сведения</h4>
+                  <ApplicantFields fields={extra} />
+                </section>
+              )}
+            </>
           ) : tab === "applications" ? (
             <div className="application-cards">
               {data.applications.map((a) => (
@@ -383,12 +424,55 @@ export function ApplicantCard({
                     <p>
                       {a.study_form} · {quotaLabels[a.quota]} · {a.year}
                     </p>
-                    <Badge tone={a.status === "pending" ? "amber" : "blue"}>
+                    <Badge
+                      tone={
+                        ["enrolled", "in_enrollment_order"].includes(a.status)
+                          ? "green"
+                          : ["new", "pending"].includes(a.status)
+                            ? "amber"
+                            : [
+                                  "declined",
+                                  "not_competitive",
+                                  "withdrawn",
+                                  "rejected",
+                                ].includes(a.status)
+                              ? "gray"
+                              : "blue"
+                      }
+                    >
                       {statusLabels[a.status] || a.status}
                     </Badge>
+                    {typeof a.source?._missing_from_snapshot === "string" && (
+                      <p className="muted">
+                        Отсутствует в выгрузке от{" "}
+                        {a.source._missing_from_snapshot}
+                      </p>
+                    )}
                     <ApplicantFields
                       fields={{
                         Кампания: a.campaign,
+                        "Код направления": a.source?.["НПС/УГСН"],
+                        "Образовательная программа":
+                          a.source?.["Обр.программа"],
+                        "Дата получения документов":
+                          a.source?.["Дата получения документов"],
+                        "Позиция в списке":
+                          a.source?.["Рейтинг"] ??
+                          a.source?.["Позиция в списке"],
+                        "Номер приказа": a.source?.enrollment_order,
+                        "Дата зачисления": a.enrolled_at?.slice(0, 10),
+                        "Дата выгрузки": a.source?._snapshot_date,
+                        ...(a.source?._previous_status
+                          ? {
+                              "Предыдущий статус":
+                                statusLabels[
+                                  String(a.source._previous_status)
+                                ] ?? a.source._previous_status,
+                              "Дата предыдущей выгрузки":
+                                a.source._previous_snapshot_date,
+                            }
+                          : {}),
+
                         "Согласие на зачисление": a.consent
                           ? "Подано"
                           : "Не подано",
@@ -399,12 +483,28 @@ export function ApplicantCard({
                     {a.source && Object.keys(a.source).length > 0 && (
                       <details>
                         <summary>Поля исходной выгрузки</summary>
-                        <ApplicantFields fields={a.source} />
+                        <ApplicantFields
+                          fields={Object.fromEntries(
+                            Object.entries(a.source).filter(
+                              ([key]) => !key.startsWith("_"),
+                            ),
+                          )}
+                        />
                       </details>
                     )}
                   </div>
                   <div className="application-score">
-                    <strong>{a.total_score}</strong>
+                    <strong>
+                      {a.total_score ||
+                        (a.source?._snapshot_date &&
+                        ![
+                          "Сумма баллов",
+                          "Итоговый балл",
+                          "Суммарный балл",
+                        ].some((key) => key in a.source!)
+                          ? "—"
+                          : 0)}
+                    </strong>
                     <span>баллов</span>
                     <small>Приоритет {a.priority}</small>
                   </div>
@@ -417,18 +517,70 @@ export function ApplicantCard({
                 />
               )}
             </div>
-          ) : (
+          ) : tab === "documents" ? (
             <>
-              <ApplicantFields fields={data.profile} />
+              <h4>Документ, удостоверяющий личность</h4>
+              <ApplicantFields fields={pick(identityFields)} />
+              <h4>Документы об образовании</h4>
+              <ApplicantFields fields={pick(educationFields)} />
+              {([" посл", " пред"] as const).map((suffix) => {
+                const fields = Object.fromEntries(
+                  Object.entries(profile)
+                    .filter(([key]) => key.endsWith(suffix))
+                    .map(([key, value]) => [
+                      key.slice(0, -suffix.length),
+                      value,
+                    ]),
+                );
+                return (
+                  Object.keys(fields).length > 0 && (
+                    <section key={suffix}>
+                      <h4>
+                        {suffix === " посл"
+                          ? "Последний документ об образовании"
+                          : "Предыдущий документ об образовании"}
+                      </h4>
+                      <ApplicantFields fields={fields} />
+                    </section>
+                  )
+                );
+              })}
+              <ApplicantFields fields={pick(["Документы доп."])} />
+            </>
+          ) : tab === "contracts" ? (
+            <>
+              {!data.contracts.length && <p>Договоров пока нет.</p>}
               {data.contracts.map((contract) => (
                 <ApplicantFields
                   key={contract.id}
                   fields={{
                     "Номер договора": contract.number,
+                    Направление: data.applications.find(
+                      (app) => app.id === contract.application_id,
+                    )?.direction,
+                    Создан: cardDate(contract.created_at),
                     Оплата: contract.paid ? "Подтверждена" : "Не подтверждена",
                     Этап: stageLabels[contract.stage] || contract.stage,
                     "Где находится":
                       locationLabels[contract.location] || contract.location,
+                  }}
+                />
+              ))}
+            </>
+          ) : (
+            <>
+              {!data.calls?.length && <p>Записей о звонках пока нет.</p>}
+              {data.calls?.map((call) => (
+                <ApplicantFields
+                  key={call.id}
+                  fields={{
+                    "Дата и время": cardDate(call.at),
+                    Направление: data.applications.find(
+                      (app) => app.id === call.application_id,
+                    )?.direction,
+                    Результат: callLabels[call.result] ?? call.result,
+                    Комментарий: call.comment,
+                    Сотрудник: call.actor,
                   }}
                 />
               ))}
