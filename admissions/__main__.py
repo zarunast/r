@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .db import Database
 from .importer import import_epgu
-from .security import ROLES, add_user
+from .security import ROLES, add_user, issue_invitation
 from .services import backup_database
 
 
@@ -19,6 +19,8 @@ def main():
     user = commands.add_parser("create-user")
     user.add_argument("login")
     user.add_argument("--role", choices=ROLES, default="operator")
+    invite = commands.add_parser("invite-user", help="Выдать одноразовый код регистрации")
+    invite.add_argument("--role", choices=ROLES, required=True)
     importer = commands.add_parser("import-epgu")
     importer.add_argument("file", type=Path)
     importer.add_argument("--year", type=int, required=True)
@@ -43,6 +45,10 @@ def main():
             with db.uow() as session:
                 add_user(session, args.login, password, args.role)
             print("Пользователь создан")
+        elif args.command == "invite-user":
+            with db.uow() as session:
+                code = issue_invitation(session, args.role)
+            print(code)
         elif args.command == "import-epgu":
             report = import_epgu(db, args.file, args.year, args.sheet)
             print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))

@@ -408,3 +408,24 @@ def test_contract_suggests_year_tariff_and_faculty_by_profile(web):
     assert values["student_address"] == "Учебный адрес из выгрузки"
     assert values["year_cost"].startswith("70 550,00")
     assert not values["total_cost"] and not values["semester_cost"]
+
+
+def test_staff_registration_requires_role_bound_single_use_invitation(web):
+    from admissions.security import issue_invitation
+
+    client, _ = web
+    with client.app.state.db.uow() as session:
+        invitation = issue_invitation(session, "editor")
+    fields = {"username": "new-editor", "password": "editor-test-password",
+              "role": "operator", "invitation": invitation}
+    assert client.post("/auth/register", json=fields).status_code == 400
+    assert client.post("/auth/register", json={**fields, "role": "editor", "username": "operator"}).status_code == 400
+    fields["role"] = "editor"
+    assert client.post("/auth/register", json=fields).status_code == 201
+    assert client.post("/auth/register", json={**fields, "username": "second-editor"}).status_code == 400
+    token = client.post("/auth/token", data={
+        "username": fields["username"], "password": fields["password"],
+    }).json()["access_token"]
+    auth = {"Authorization": f"Bearer {token}"}
+    assert client.get("/auth/me", headers=auth).json()["role_id"] == "editor"
+    assert client.get("/dashboard?year=2026", headers=auth).status_code == 403

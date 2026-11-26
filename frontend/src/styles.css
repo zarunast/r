@@ -3650,3 +3650,8 @@ tbody tr:hover {
 .role-workspace.gradebook {
   width: min(100% - 2rem, 100rem);
 }
+
+.login-mode {
+  width: 100%;
+  margin-top: 0.75rem;
+}

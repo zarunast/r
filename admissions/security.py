@@ -1,11 +1,12 @@
 from datetime import datetime, timedelta, timezone
-import os
+from hashlib import sha256
+from secrets import token_urlsafe
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
-from .models import User
+from .models import StaffInvitation, User
 
 
 passwords = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -59,3 +60,24 @@ def decode_token(token, secret):
         return int(claims["sub"])
     except (JWTError, ValueError, KeyError):
         raise ValueError("Недействительный или просроченный токен") from None
+
+
+def issue_invitation(session, role):
+    if role not in ROLES:
+        raise ValueError("Неизвестная роль")
+    code = token_urlsafe(32)
+    session.add(StaffInvitation(digest=sha256(code.encode()).hexdigest(), role=role,
+                                expires_at=datetime.now(timezone.utc) + timedelta(hours=24)))
+    return code
+
+
+def register_staff(session, login, password, role, code):
+    validate_password(password)
+    claimed = session.scalar(delete(StaffInvitation).where(
+        StaffInvitation.digest == sha256(code.strip().encode()).hexdigest(),
+        StaffInvitation.role == role,
+        StaffInvitation.expires_at > datetime.now(timezone.utc),
+    ).returning(StaffInvitation.digest))
+    if claimed is None:
+        raise ValueError("Код недействителен для выбранной роли или срок его действия истёк")
+    add_user(session, login.strip(), password, role)

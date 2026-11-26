@@ -19,12 +19,19 @@ from .db import Database
 from .exam_policy import selected_scores, subject_groups
 from .importer import backfill_missing_scores, import_epgu
 from .models import Applicant, Application, Call, Contract, ContractEvent, Quota, SeatPlan, User, now
-from .security import ROLES, authenticate, decode_token, token_for
+from .security import ROLES, authenticate, decode_token, register_staff, token_for
 from . import services as svc
 
 
 class Input(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class StaffRegistration(Input):
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=10, max_length=72)
+    role: Literal["operator", "editor", "examiner"]
+    invitation: str = Field(min_length=1, max_length=128)
 
 
 class ApplicantData(Input):
@@ -316,6 +323,11 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         if user is None or (role is not None and user.role != role):
             raise HTTPException(401, "Неверный логин или пароль для этого входа")
         return {"access_token": token_for(user, secret), "token_type": "bearer"}
+
+    @app.post("/auth/register", dependencies=[Depends(local_only)], status_code=201)
+    def register_account(body: StaffRegistration, s=Depends(session)):
+        register_staff(s, body.username, body.password, body.role, body.invitation)
+        return {"created": True}
 
     @app.post("/auth/token", dependencies=[Depends(local_only)])
     def login(form: OAuth2PasswordRequestForm = Depends(), s=Depends(session)):

@@ -7,7 +7,7 @@ import {
   LockKeyhole,
   ShieldCheck,
 } from "lucide-react";
-import { useStore } from "../store";
+import { registerStaff, useStore } from "../store";
 import { ErrorState } from "../components/ui";
 
 export function Login() {
@@ -15,6 +15,8 @@ export function Login() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [visible, setVisible] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [registeredLogin, setRegisteredLogin] = useState("");
   return (
     <div className="login-page">
       <div className="login-visual">
@@ -68,15 +70,24 @@ export function Login() {
           <span className="login-lock">
             <LockKeyhole size={24} />
           </span>
-          <h2>Вход в систему</h2>
+          <h2>{registering ? "Регистрация сотрудника" : "Вход в систему"}</h2>
 
           <form
+            key={String(registering)}
             onSubmit={async (e) => {
               e.preventDefault();
               const f = new FormData(e.currentTarget);
               setBusy(true);
               setError("");
               try {
+                if (registering) {
+                  await registerStaff(f);
+                  setRegisteredLogin(String(f.get("username")).trim());
+                  setRegistering(false);
+                  setVisible(false);
+                  notify("Учётная запись создана. Войдите с новым паролем.");
+                  return;
+                }
                 await login(
                   String(f.get("username")),
                   String(f.get("password")),
@@ -97,6 +108,8 @@ export function Login() {
                 placeholder="Введите логин"
                 required
                 autoComplete="username"
+                maxLength={100}
+                defaultValue={registeredLogin}
                 autoFocus
               />
             </label>
@@ -108,7 +121,10 @@ export function Login() {
                   type={visible ? "text" : "password"}
                   placeholder="Введите пароль"
                   required
-                  autoComplete="current-password"
+                  autoComplete={
+                    registering ? "new-password" : "current-password"
+                  }
+                  minLength={registering ? 10 : undefined}
                 />
                 <button
                   type="button"
@@ -120,20 +136,77 @@ export function Login() {
                 </button>
               </span>
             </label>
+            {registering && (
+              <>
+                <label className="field">
+                  Повторите пароль
+                  <input
+                    name="password_confirmation"
+                    type={visible ? "text" : "password"}
+                    autoComplete="new-password"
+                    minLength={10}
+                    required
+                  />
+                </label>
+                <label className="field">
+                  Роль
+                  <select name="role" defaultValue="" required>
+                    <option value="" disabled>
+                      Выберите роль
+                    </option>
+                    <option value="operator">
+                      Сотрудник приёмной комиссии
+                    </option>
+                    <option value="editor">Редактор сайта абитуриента</option>
+                    <option value="examiner">Проверяющий экзамены</option>
+                  </select>
+                </label>
+                <label className="field">
+                  Код приглашения
+                  <input
+                    name="invitation"
+                    autoComplete="off"
+                    spellCheck={false}
+                    maxLength={128}
+                    required
+                  />
+                </label>
+              </>
+            )}
             {error && <ErrorState error={error} />}
             <button
               className="button primary login-submit"
               type="submit"
               disabled={busy}
             >
-              {busy ? "Входим…" : "Войти в систему"}
+              {registering
+                ? busy
+                  ? "Создаём…"
+                  : "Зарегистрироваться"
+                : busy
+                  ? "Входим…"
+                  : "Войти в систему"}
               <ArrowRight size={18} />
             </button>
           </form>
+          <button
+            className="button login-mode"
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setRegistering(!registering);
+              setError("");
+              setVisible(false);
+            }}
+          >
+            {registering ? "Вернуться ко входу" : "Создать учётную запись"}
+          </button>
           <div className="login-support">
             <ShieldCheck size={17} />
             <p>
-              Доступ предоставляется администратором БГТУ.
+              {registering
+                ? "Одноразовый код приглашения выдаёт администратор БГТУ."
+                : "Доступ предоставляется администратором БГТУ."}
               <br />
               Для входа подключитесь к локальной сети университета.
             </p>

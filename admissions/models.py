@@ -112,3 +112,11 @@ class ActivityEvent(Base):
     object: Mapped[str]
     detail: Mapped[str] = mapped_column(default="")
     status: Mapped[str] = mapped_column(default="success")
+
+
+class StaffInvitation(Base):
+    __tablename__ = "staff_invitations"
+
+    digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    role: Mapped[str]
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
