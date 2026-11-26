@@ -43,12 +43,12 @@ const names = [
   ["Яковлева", "Вероника", "Павловна"],
 ];
 export const demoGroups: Group[] = [
-  "Программная инженерия",
-  "Информатика и вычислительная техника",
-  "Прикладная математика и информатика",
-  "Экономика",
-  "Машиностроение",
-].map((direction) => ({ direction, campaign: "бак", study_form: "Очная" }));
+  "09.02.07 Информационные системы и программирование",
+  "15.02.16 Технология машиностроения",
+  "23.02.01 Организация перевозок и управление на транспорте",
+  "38.02.01 Экономика и бухгалтерский учёт",
+  "09.02.06 Сетевое и системное администрирование",
+].map((direction) => ({ direction, campaign: "СПО", study_form: "Очная" }));
 let people: Person[] = names.map(([surname, first_name, patronymic], i) => ({
   number: String(10470 + i).padStart(9, "0"),
   surname,
@@ -57,7 +57,7 @@ let people: Person[] = names.map(([surname, first_name, patronymic], i) => ({
   phone: "",
   email: `applicant${i + 1}@example.com`,
   applications_count: (i % 3) + 1,
-  best_score: 294 - i * 3,
+  best_score: (494 - i * 5) / 100,
 }));
 let applications: Application[] = people.flatMap((p, i) =>
   Array.from({ length: p.applications_count }, (_, j) => ({
@@ -68,9 +68,15 @@ let applications: Application[] = people.flatMap((p, i) =>
     quota: (i % 4 === 0 ? "paid" : "general") as Quota,
     priority: j + 1,
     status: i % 7 === 0 ? "pending" : "participating",
-    total_score: p.best_score - j * 2,
-    achievements: i % 10,
-    exams: { "Русский язык": 88, Математика: 90, Информатика: 85 },
+    total_score: Math.round(p.best_score * 100) - j * 2,
+    source: {
+      "Средний балл аттестата": (
+        (Math.round(p.best_score * 100) - j * 2) /
+        100
+      ).toFixed(2),
+    },
+    achievements: 0,
+    exams: {},
     consent: i % 3 !== 0,
   })),
 );
@@ -108,7 +114,7 @@ let activities: Activity[] = [
     action: "Сформировал конкурсный рейтинг",
     status: "info",
     object: "Программная инженерия",
-    detail: "Бюджет · бакалавриат",
+    detail: "Бюджет · СПО",
   },
   {
     id: 4,
@@ -203,17 +209,18 @@ export async function demoRequest<T>(
     output = {
       date: demoDate,
       year,
-      applicants: year === 2026 ? 10247 + added : 0,
-      applications: year === 2026 ? 28614 + added : 0,
-      applications_today: year === 2026 ? 1284 + added : 0,
-      paid_contracts: year === 2026 ? 847 : 0,
+      applicants: new Set(inYear.map((a) => a.applicant_number)).size,
+      applications: inYear.length,
+      applications_today: year === 2026 ? added : 0,
+      paid_contracts:
+        year === 2026 ? contracts.filter((c) => c.paid).length : 0,
       overcrowded: year === 2026 ? 12 : 0,
-      enrolled: year === 2026 ? 2156 : 0,
+      enrolled: inYear.filter((a) => a.status === "enrolled").length,
       plan_count: year === 2026 ? 42 : 0,
     };
   else if (path === "/activities") output = page(activities);
   else if (path === "/catalog/groups") output = year === 2026 ? demoGroups : [];
-  else if (path === "/registry") {
+  else if (path === "/registry" && method === "GET") {
     const filtered = people.filter(
       (p) =>
         includes(`${fullName(p)} ${p.number}`) &&
@@ -232,10 +239,12 @@ export async function demoRequest<T>(
     const p = body.applicant;
     const a = body.application;
     const score =
-      Object.values(a.exam_scores as Record<string, number>).reduce(
-        (sum, v) => sum + v,
-        0,
-      ) + a.achievements;
+      a.campaign === "СПО"
+        ? Number(a.certificate_average)
+        : Object.values(a.exam_scores as Record<string, number>).reduce(
+            (sum, v) => sum + v,
+            0,
+          ) + a.achievements;
     people.unshift({
       ...p,
       phone: p.profile["Телефон"],
@@ -246,7 +255,11 @@ export async function demoRequest<T>(
     applications.push({
       ...a,
       id: Date.now(),
-      total_score: score,
+      total_score: a.campaign === "СПО" ? Math.round(score * 100) : score,
+      source:
+        a.campaign === "СПО"
+          ? { "Средний балл аттестата": score.toFixed(2) }
+          : {},
       exams: a.exam_scores,
       status: "participating",
     });
@@ -329,7 +342,7 @@ export async function demoRequest<T>(
               a.campaign === q.get("campaign") &&
               a.study_form === q.get("study_form") &&
               a.quota === quota &&
-              a.status !== "pending",
+              ["participating", "accepted", "enrolled"].includes(a.status),
           )
           .sort((a, b) => b.total_score - a.total_score);
         let rank = 0;
@@ -340,7 +353,7 @@ export async function demoRequest<T>(
             return {
               applicant_number: a.applicant_number,
               application_id: a.id,
-              score: a.total_score,
+              score: a.campaign === "СПО" ? a.total_score / 100 : a.total_score,
               rank,
               full_name: fullName(
                 people.find((p) => p.number === a.applicant_number)!,
@@ -486,7 +499,7 @@ export async function demoRequest<T>(
   } else if (path === "/reports/statistics")
     output = {
       year,
-      applicants: year === 2026 ? 10247 + added : 0,
+      applicants: new Set(inYear.map((a) => a.applicant_number)).size,
       applications: year === 2026 ? 28614 : 0,
       statuses:
         year === 2026

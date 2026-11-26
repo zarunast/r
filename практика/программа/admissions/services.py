@@ -1,15 +1,17 @@
 from datetime import date, datetime, timedelta, timezone
 import io
 import json
+import os
 import sqlite3
 from pathlib import Path
 from xml.etree.ElementTree import Element, SubElement, tostring
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from docx import Document
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import func, select
 
+from .college import display_score, is_college
 from .importer import integer, normalize, text
 from .models import Applicant, Application, Call, Contract, ContractEvent, Quota, SeatPlan, now
 
@@ -20,6 +22,14 @@ TRANSITIONS = {
     "draft": {"issued", "cancelled"}, "issued": {"signed", "cancelled"},
     "signed": {"registered", "cancelled"}, "registered": {"cancelled"}, "cancelled": set(),
 }
+
+
+def moscow_today():
+    try:
+        zone = ZoneInfo("Europe/Moscow")
+    except ZoneInfoNotFoundError:
+        zone = timezone(timedelta(hours=3))
+    return datetime.now(zone).date()
 
 
 def require(session, model, key):
@@ -40,6 +50,8 @@ def group_query(year, direction=None, campaign=None, study_form=None, quota=None
 def ranking(session, year, direction, campaign, study_form, quota):
     """Ничьи разрешаются номером для стабильности; это не правило приказа о зачислении."""
     q = group_query(year, direction, campaign, study_form, quota).where(Application.status.in_(ACTIVE))
+    if is_college(campaign):
+        q = q.where(Application.source["Средний балл аттестата"].as_string().is_not(None))
     rows = session.scalars(q.order_by(Application.total_score.desc(), Application.applicant_number)).all()
     result = []
     previous = None
@@ -48,7 +60,7 @@ def ranking(session, year, direction, campaign, study_form, quota):
         if app.total_score != previous:
             place = index
         previous = app.total_score
-        result.append({"applicant_number": app.applicant_number, "score": app.total_score,
+        result.append({"applicant_number": app.applicant_number, "score": display_score(app),
                        "quota": app.quota, "direction": app.direction, "rank": place})
     return result
 
@@ -72,8 +84,8 @@ def forecast(session, application):
     elif seats is None:
         result["factors"].append("План мест не задан.")
     else:
-        better = sum(r["score"] > a.total_score for r in rows)
-        tied = sum(r["score"] == a.total_score for r in rows)
+        better = sum(r["score"] > display_score(a) for r in rows)
+        tied = sum(r["score"] == display_score(a) for r in rows)
         if better >= seats.seats:
             result["assessment"] = "outside_seats"
         elif better + tied <= seats.seats:
@@ -149,7 +161,7 @@ def reconcile_payments(session, file, actor):
 
 
 def call_queue(session, year, change_deadline, payment_deadline, today=None):
-    today = today or datetime.now(ZoneInfo("Europe/Moscow")).date()
+    today = today or moscow_today()
     reasons = []
     if change_deadline - timedelta(days=7) <= today <= change_deadline:
         reasons.append("direction_deadline")
@@ -219,20 +231,23 @@ def xlsx_bytes(rows):
 
 def pdf_bytes(rows):
     from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.pagesizes import A4
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
-    font = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
-    if not font.exists():
-        raise ValueError("Для PDF нужен шрифт DejaVuSans.ttf (fonts-dejavu-core)")
-    pdfmetrics.registerFont(TTFont("DejaVu", str(font)))
+    paths = (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+             Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "arial.ttf",
+             Path("/System/Library/Fonts/Supplemental/Arial.ttf"))
+    font = next((candidate for candidate in paths if candidate.is_file()), None)
+    if font is None:
+        raise ValueError("Для отчёта PDF установите DejaVu Sans или Arial")
+    pdfmetrics.registerFont(TTFont("ReportSans", str(font)))
     out = io.BytesIO()
     columns = ["rank", "applicant_number", "score", "quota"]
     data = [["Место", "Номер абитуриента", "Баллы", "Квота"]]
     data += [[str(row.get(k, "")) for k in columns] for row in rows]
     table = Table(data, repeatRows=1)
-    table.setStyle(TableStyle([("FONTNAME", (0, 0), (-1, -1), "DejaVu"),
+    table.setStyle(TableStyle([("FONTNAME", (0, 0), (-1, -1), "ReportSans"),
                                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
                                ("GRID", (0, 0), (-1, -1), .3, colors.grey)]))
     SimpleDocTemplate(out, pagesize=A4).build([table])

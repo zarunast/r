@@ -11,9 +11,10 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Uploa
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
+from .college import campaign_name, certificate_points, display_score, is_college
 from .db import Database
 from .importer import import_epgu
 from .models import Applicant, Application, Call, Contract, ContractEvent, Quota, SeatPlan, User, now
@@ -54,12 +55,14 @@ class ApplicationData(Group):
     exam_scores: dict[str, int] = Field(default_factory=dict)
     achievements: int = Field(default=0, ge=0, le=100)
     consent: bool = False
+    certificate_average: str | None = None
 
 
 class ApplicationPatch(Input):
     status: Literal["participating", "pending", "accepted", "withdrawn", "rejected"] | None = None
     priority: int | None = Field(default=None, ge=1, le=100)
     consent: bool | None = None
+    certificate_average: str | None = None
     exam_scores: dict[str, int] | None = None
     achievements: int | None = Field(default=None, ge=0, le=100)
 
@@ -99,6 +102,19 @@ def model_dict(obj):
     # SQLite хранит UTC без суффикса timezone; в JSON возвращаем явный UTC.
     return {k: v.replace(tzinfo=timezone.utc) if isinstance(v, datetime) and v.tzinfo is None else v
             for k, v in result.items()}
+
+
+def application_from_body(body):
+    values = body.model_dump(exclude={"exam_scores", "certificate_average"})
+    values.update(quota=body.quota.value, campaign=campaign_name(body.campaign), exams=body.exam_scores)
+    if is_college(body.campaign):
+        if body.exam_scores:
+            score_values(body.exam_scores, 0)
+        points = certificate_points(body.certificate_average)
+        values.update(total_score=points, source={"Средний балл аттестата": str(points / 100)})
+    else:
+        values["total_score"] = score_values(body.exam_scores, body.achievements)
+    return Application(**values)
 
 
 def score_values(exams, achievements):
@@ -250,10 +266,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
     @app.post("/applications", dependencies=private, status_code=201)
     def add_application(body: ApplicationData, s=Depends(session)):
         svc.require(s, Applicant, body.applicant_number)
-        values = body.model_dump(exclude={"exam_scores"})
-        values["quota"] = body.quota.value
-        app_obj = Application(**values, exams=body.exam_scores,
-                              total_score=score_values(body.exam_scores, body.achievements))
+        app_obj = application_from_body(body)
         s.add(app_obj)
         s.flush()
         return model_dict(app_obj)
@@ -262,13 +275,10 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
     def register(body: RegistrationData, s=Depends(session)):
         if body.applicant.number != body.application.applicant_number:
             raise ValueError("Номера абитуриента и заявления должны совпадать")
-        total = score_values(body.application.exam_scores, body.application.achievements)
+        obj = application_from_body(body.application)
         person = Applicant(**body.applicant.model_dump())
         s.add(person)
         s.flush()
-        values = body.application.model_dump(exclude={"exam_scores"})
-        values["quota"] = body.application.quota.value
-        obj = Application(**values, exams=body.application.exam_scores, total_score=total)
         s.add(obj)
         s.flush()
         return {"applicant_number": person.number, "application_id": obj.id}
@@ -279,7 +289,19 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         values = body.model_dump(exclude_none=True)
         if obj.enrolled_at and values:
             raise ValueError("Зачисленное заявление нельзя менять без отмены приказа в отдельной процедуре")
-        if "achievements" in values and "exam_scores" not in values:
+        if is_college(obj.campaign):
+            average = values.pop("certificate_average", None)
+            if average is not None:
+                obj.total_score = certificate_points(average)
+                obj.source = {**obj.source, "Средний балл аттестата": str(obj.total_score / 100)}
+            if "exam_scores" in values:
+                exams = values.pop("exam_scores")
+                if exams:
+                    score_values(exams, 0)
+                obj.exams = exams
+        elif "certificate_average" in values:
+            raise ValueError("Средний балл документа применяется к кампании СПО")
+        elif "achievements" in values and "exam_scores" not in values:
             raise ValueError("Для пересчёта ИД передайте выбранные exam_scores: в Excel есть альтернативные экзамены")
         if "exam_scores" in values:
             exams = values.pop("exam_scores")
@@ -293,6 +315,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
     def plan(body: PlanData, s=Depends(session)):
         values = body.model_dump()
         values["quota"] = body.quota.value
+        values["campaign"] = campaign_name(body.campaign)
         conditions = [getattr(SeatPlan, k) == v for k, v in values.items() if k != "seats"]
         obj = s.scalar(select(SeatPlan).where(*conditions))
         if obj:
@@ -312,7 +335,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         rows = s.scalars(svc.group_query(year).where(Application.applicant_number == number)).all()
         if not rows:
             raise LookupError("Заявления не найдены")
-        return [{"applicant_number": a.applicant_number, "score": a.total_score, "quota": a.quota,
+        return [{"applicant_number": a.applicant_number, "score": display_score(a), "quota": a.quota,
                  "direction": a.direction, "campaign": a.campaign, "study_form": a.study_form,
                  "forecast": svc.forecast(s, a)} for a in rows]
 
@@ -334,6 +357,14 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
         svc.require(s, Contract, contract_id)
         return [model_dict(e) for e in s.scalars(select(ContractEvent).where(ContractEvent.contract_id == contract_id)
                                                 .order_by(ContractEvent.at, ContractEvent.id))]
+
+    @app.get("/contracts/{contract_id}/document", dependencies=private)
+    def default_contract_document(contract_id: int, s=Depends(session)):
+        contract = svc.require(s, Contract, contract_id)
+        template = Path(__file__).with_name("templates") / "college-contract.docx"
+        return Response(svc.render_contract(s, contract, template),
+                        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        headers={"Content-Disposition": 'attachment; filename="college-contract.docx"'})
 
     @app.post("/contracts/{contract_id}/document", dependencies=private)
     def contract_document(contract_id: int, template: UploadFile = File(), s=Depends(session)):
@@ -362,6 +393,7 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
 
     @app.post("/applications/{application_id}/enroll", dependencies=private)
     def enroll(application_id: int, body: EnrollmentData, s=Depends(session)):
+        s.connection().exec_driver_sql("BEGIN IMMEDIATE")
         obj = svc.require(s, Application, application_id)
         if obj.status not in svc.ACTIVE or obj.enrolled_at:
             raise ValueError("Заявление не участвует в конкурсе или уже зачислено")
@@ -369,6 +401,15 @@ def create_app(database_url=None, jwt_secret=None, internal_networks=None):
                          Application.year == obj.year, Application.campaign == obj.campaign, Application.status == "enrolled"))
         if other:
             raise ValueError("Абитуриент уже зачислен в этой кампании")
+        if is_college(obj.campaign):
+            if not obj.source.get("Средний балл аттестата"):
+                raise ValueError("Укажите средний балл документа об образовании")
+            group = svc.group_query(obj.year, obj.direction, obj.campaign, obj.study_form, obj.quota)
+            plan = s.scalar(select(SeatPlan).filter_by(year=obj.year, direction=obj.direction,
+                campaign=obj.campaign, study_form=obj.study_form, quota=obj.quota))
+            used = s.scalar(select(func.count()).select_from(group.where(Application.status == "enrolled").subquery()))
+            if plan is None or used >= plan.seats:
+                raise ValueError("Для этой группы нет свободных мест по плану приёма")
         if obj.quota == Quota.PAID.value:
             contract = s.scalar(select(Contract).where(Contract.application_id == obj.id))
             if not contract or not contract.paid or contract.stage != "registered":

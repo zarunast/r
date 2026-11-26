@@ -15,6 +15,7 @@ def main():
     parser.add_argument("--database", default=os.environ.get("DATABASE_URL", "sqlite:///data/admissions.sqlite3"))
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("init-db")
+    commands.add_parser("practice-demo", help="Заполнить отдельную демонстрационную базу")
     user = commands.add_parser("create-user")
     user.add_argument("login")
     importer = commands.add_parser("import-epgu")
@@ -24,6 +25,12 @@ def main():
     backup = commands.add_parser("backup")
     backup.add_argument("destination", type=Path)
     args = parser.parse_args()
+    if args.command == "practice-demo":
+        from .practice_demo import LOGIN, PASSWORD, URL, seed
+        seed()
+        print(URL)
+        print(f"{LOGIN} / {PASSWORD}")
+        return 0
     db = Database(args.database)
     db.create_schema()
     try:

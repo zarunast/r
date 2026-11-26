@@ -136,14 +136,18 @@ export function Rankings() {
             Баллы на границе мест
             <CircleHelp size={13} />
           </span>
-          <strong>{boundary ?? "—"}</strong>
+          <strong>
+            {boundary == null ? "—" : boundary.toLocaleString("ru-RU")}
+          </strong>
         </div>
         <span className="ranking-hint">
           <Trophy size={23} />
           <span>
-            Баллы ЕГЭ + достижения
+            {group?.campaign === "СПО"
+              ? "Средний балл аттестата"
+              : "Конкурсные баллы"}
             <br />
-            <small>Льготы определяют категорию конкурса</small>
+            <small>Порядок в пределах выбранной категории</small>
           </span>
         </span>
       </div>
@@ -205,7 +209,9 @@ export function Rankings() {
                     </td>
                     <td className="mono muted">{row.applicant_number}</td>
                     <td>
-                      <strong className="score-label">{row.score}</strong>
+                      <strong className="score-label">
+                        {row.score.toLocaleString("ru-RU")}
+                      </strong>
                     </td>
                     <td className="center">{row.priority}</td>
                     <td>

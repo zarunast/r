@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import {
   ArrowDownToLine,
   ArrowUpRight,
@@ -334,7 +334,6 @@ function ContractModal({
   const [stage, setStage] = useState(contract.stage);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const input = useRef<HTMLInputElement>(null);
   const history = useLoad<
     {
       at: string;
@@ -427,12 +426,20 @@ function ContractModal({
           <button
             className="button"
             type="button"
-            onClick={() => {
+            onClick={async () => {
               if (demo) {
                 setError("Генерация DOCX доступна после входа в рабочую базу");
                 return;
               }
-              input.current?.click();
+              try {
+                await download(
+                  `/contracts/${contract.id}/document`,
+                  `Договор ${contract.number}.docx`,
+                );
+                notify("Договор и допсоглашение сформированы");
+              } catch (error) {
+                setError((error as Error).message);
+              }
             }}
           >
             <ArrowDownToLine size={16} />
@@ -441,29 +448,6 @@ function ContractModal({
           <SaveButton busy={busy} label="Обновить статус" />
         </div>
       </form>
-      <input
-        ref={input}
-        type="file"
-        accept=".docx"
-        className="sr-only"
-        aria-label="Шаблон договора Word"
-        onChange={async (e) => {
-          const file = e.target.files?.[0];
-          if (!file) return;
-          try {
-            const form = new FormData();
-            form.append("template", file);
-            await download(
-              `/contracts/${contract.id}/document`,
-              "contract.docx",
-              { method: "POST", body: form },
-            );
-            notify("Договор Word сформирован");
-          } catch (err) {
-            setError((err as Error).message);
-          }
-        }}
-      />
       <div className="history-heading">
         <History size={17} />
         <h4>История изменений</h4>

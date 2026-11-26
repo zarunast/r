@@ -3484,3 +3484,25 @@ tbody tr:hover {
     margin-bottom: 20px;
   }
 }
+
+.college-application-actions {
+  display: grid;
+  gap: 0.625rem;
+  margin-top: 0.75rem;
+}
+
+.college-application-actions summary {
+  color: #225de0;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.college-application-actions form {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.75rem 0;
+}
+
+.college-application-actions form .button {
+  justify-self: start;
+}

@@ -56,7 +56,7 @@ export function Login() {
         </div>
         <div className="login-visual-footer">
           <ShieldCheck size={16} />
-          Защищённая внутренняя система БГТУ
+          Приёмная комиссия Политехнического колледжа БГТУ
         </div>
       </div>
       <main className="login-main">

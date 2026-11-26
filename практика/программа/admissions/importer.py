@@ -8,6 +8,7 @@ import re
 from openpyxl import load_workbook
 from sqlalchemy import select
 
+from .college import campaign_name, certificate_points, is_college
 from .models import Applicant, Application, Quota, now
 
 
@@ -21,13 +22,14 @@ ALIASES = {
     "campaign": ["Приемная кампания", "Уровень образования"],
     "study_form": ["Форма обучения"],
     "category": ["Категория", "Квота", "Основание приема"],
+    "certificate_average": ["Средний балл аттестата", "Средний балл документа об образовании"],
     "total_score": ["Сумма баллов", "Итоговый балл", "Суммарный балл"],
     "achievements": ["Общие ИД", "Баллы ИД", "Индивидуальные достижения"],
     "surname": ["Фамилия"], "first_name": ["Имя"], "patronymic": ["Отчество"],
     "priority": ["Приоритет"], "status": ["Статус"], "consent": ["Согласие"],
 }
 REVERSE = {normalize(alias): name for name, aliases in ALIASES.items() for alias in aliases}
-REQUIRED = {"number", "direction", "campaign", "study_form", "category", "total_score"}
+REQUIRED = {"number", "direction", "campaign", "study_form", "category"}
 EXAMS = {
     "Математика", "Прикладная математика", "Информатика", "Прикладная информатика",
     "Физика", "Химия", "Механика", "Основы электротехники и электроники",
@@ -123,6 +125,8 @@ def read_epgu(path, year, sheet=None):
             fields = [REVERSE.get(normalize(v)) for v in row]
             if REQUIRED.issubset(set(fields)):
                 duplicates = [k for k, v in Counter(x for x in fields if x).items() if v > 1]
+                if not {"certificate_average", "total_score"}.intersection(fields):
+                    continue
                 if duplicates:
                     raise ValueError("Неоднозначные заголовки: " + ", ".join(duplicates))
                 header = [text(v) for v in row]
@@ -158,10 +162,16 @@ def read_epgu(path, year, sheet=None):
                 status_raw = normalize(get("status", "Участвует в конкурсе"))
                 if status_raw not in STATUS:
                     raise ValueError("Неизвестный статус заявления")
-                app = dict(applicant_number=number, year=year, campaign=text(get("campaign")),
+                campaign = campaign_name(text(get("campaign")))
+                if is_college(campaign):
+                    score = certificate_points(get("certificate_average"))
+                    raw["Средний балл аттестата"] = str(score / 100)
+                else:
+                    score = integer(get("total_score"), "Сумма баллов")
+                app = dict(applicant_number=number, year=year, campaign=campaign,
                            direction=text(get("direction")), study_form=text(get("study_form")),
                            quota=quota_for(get("category")), priority=integer(get("priority", 1), "Приоритет", 1, 100),
-                           status=STATUS[status_raw], total_score=integer(get("total_score"), "Сумма баллов"),
+                           status=STATUS[status_raw], total_score=score,
                            achievements=integer(get("achievements", 0) or 0, "Общие ИД", 0, 100),
                            exams={k: integer(v, k, 0, 100) for k, v in raw.items() if k in EXAMS and v},
                            consent=boolean(get("consent", False)), source=raw)
@@ -174,7 +184,7 @@ def read_epgu(path, year, sheet=None):
                 parsed.append((applicant, app))
             except ValueError as error:
                 report.errors.append({"sheet": ws.title, "row": line, "error": str(error)})
-        report.warnings.append("Сумма баллов взята из итогового столбца; альтернативные экзамены не суммируются.")
+        report.warnings.append("Для СПО используется средний балл документа об образовании. Для других кампаний сохраняется итоговый столбец.")
         report.warnings.append("Выгрузка обновляет присутствующие заявления; отсутствующие автоматически не удаляются.")
         return parsed, report
     finally:

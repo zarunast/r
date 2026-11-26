@@ -49,6 +49,8 @@ export type Application = Group & {
   priority: number;
   status: string;
   total_score: number;
+  source?: Record<string, string>;
+  enrolled_at?: string | null;
   achievements: number;
   exams: Record<string, number>;
   consent: boolean;

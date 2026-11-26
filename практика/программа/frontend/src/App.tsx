@@ -42,7 +42,7 @@ import { Reports } from "./pages/Reports";
 import { Login } from "./pages/Login";
 
 const navigation: { id: Page; label: string; icon: LucideIcon }[] = [
-  { id: "dashboard", label: "Дашборд", icon: LayoutDashboard },
+  { id: "dashboard", label: "Главное", icon: LayoutDashboard },
   { id: "registry", label: "Реестр", icon: Users },
   { id: "rankings", label: "Рейтинги", icon: ChartColumn },
   { id: "contracts", label: "Договоры", icon: FileText },
@@ -123,7 +123,7 @@ export default function App() {
   );
   const page = navigation.find((n) => n.id === route);
   const titles: Record<string, string> = {
-    dashboard: "АИС Приёмная комиссия",
+    dashboard: "Приёмная комиссия колледжа",
     registry: "Реестр абитуриентов",
     rankings: "Конкурсные рейтинги",
     contracts: "Работа с договорами",
@@ -180,7 +180,7 @@ export default function App() {
               <span className="brand-mark">Б</span>
               <span>
                 <strong>АИС ПК</strong>
-                <small>БГТУ {year}</small>
+                <small>Колледж БГТУ · {year}</small>
               </span>
             </a>
             <div className="nav-section-label">Рабочее пространство</div>

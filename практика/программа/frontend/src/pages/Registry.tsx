@@ -18,6 +18,7 @@ import {
   params,
   quotaLabels,
   statusLabels,
+  type Application,
   type Group,
   type Person,
   type PersonDetail,
@@ -222,7 +223,9 @@ export function Registry({ onImport }: { onImport: () => void }) {
                       </span>
                     </td>
                     <td>
-                      <span className="score-label">{person.best_score}</span>
+                      <span className="score-label">
+                        {numberFormat(person.best_score)}
+                      </span>
                     </td>
                     <td>
                       <button
@@ -365,10 +368,23 @@ export function ApplicantCard({
                     <Badge tone={a.status === "pending" ? "amber" : "blue"}>
                       {statusLabels[a.status] || a.status}
                     </Badge>
+                    <p>Согласие: {a.consent ? "подано" : "не подано"}</p>
+                    {a.campaign === "СПО" && (
+                      <CollegeApplicationActions application={a} />
+                    )}
                   </div>
                   <div className="application-score">
-                    <strong>{a.total_score}</strong>
-                    <span>баллов</span>
+                    <strong>
+                      {a.campaign === "СПО"
+                        ? (a.source?.["Средний балл аттестата"]?.replace(
+                            ".",
+                            ",",
+                          ) ?? "—")
+                        : a.total_score}
+                    </strong>
+                    <span>
+                      {a.campaign === "СПО" ? "средний балл" : "баллов"}
+                    </span>
                     <small>Приоритет {a.priority}</small>
                   </div>
                 </div>
@@ -401,6 +417,106 @@ export function ApplicantCard({
         </>
       )}
     </Modal>
+  );
+}
+
+function CollegeApplicationActions({
+  application,
+}: {
+  application: Application;
+}) {
+  const { api, refresh, notify, demo } = useStore();
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>, enrollment = false) {
+    event.preventDefault();
+    const fields = Object.fromEntries(new FormData(event.currentTarget));
+    setError("");
+    setBusy(true);
+    try {
+      await api(
+        `/applications/${application.id}${enrollment ? "/enroll" : ""}`,
+        jsonBody(
+          enrollment ? fields : { ...fields, consent: fields.consent === "on" },
+          enrollment ? "POST" : "PATCH",
+        ),
+      );
+      refresh();
+      notify(
+        enrollment ? "Зачисление зарегистрировано" : "Заявление обновлено",
+      );
+    } catch (error) {
+      setError((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  if (application.status === "enrolled")
+    return (
+      <p>
+        Приказ {application.source?.enrollment_order || "—"} ·{" "}
+        {application.enrolled_at?.slice(0, 10)}
+      </p>
+    );
+  if (demo) return null;
+  return (
+    <div className="college-application-actions">
+      <details>
+        <summary>Обновить заявление</summary>
+        <form onSubmit={(event) => submit(event)}>
+          <label className="field">
+            Средний балл аттестата
+            <input
+              name="certificate_average"
+              type="number"
+              min="2"
+              max="5"
+              step="0.01"
+              defaultValue={application.source?.["Средний балл аттестата"]}
+              required
+            />
+          </label>
+          <label className="field">
+            Статус
+            <select name="status" defaultValue={application.status}>
+              {Object.entries(statusLabels)
+                .filter(([key]) => key !== "enrolled")
+                .map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label className="checkbox-field">
+            <input
+              name="consent"
+              type="checkbox"
+              defaultChecked={application.consent}
+            />{" "}
+            Согласие получено
+          </label>
+          <SaveButton busy={busy} label="Сохранить заявление" />
+        </form>
+      </details>
+      {["participating", "accepted"].includes(application.status) && (
+        <details>
+          <summary>Зарегистрировать зачисление</summary>
+          <form onSubmit={(event) => submit(event, true)}>
+            <label className="field">
+              Номер приказа
+              <input name="order_number" maxLength={100} required />
+            </label>
+            <label className="field">
+              Дата зачисления
+              <input name="enrolled_at" type="date" required />
+            </label>
+            <SaveButton busy={busy} label="Зарегистрировать" />
+          </form>
+        </details>
+      )}
+      {error && <ErrorState error={error} />}
+    </div>
   );
 }
 
@@ -496,6 +612,7 @@ function NewApplicant({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [quota, setQuota] = useState<Quota>("general");
+  const [campaign, setCampaign] = useState("СПО");
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -513,16 +630,22 @@ function NewApplicant({
       year,
       direction: f.get("direction"),
       campaign: f.get("campaign"),
+      ...(campaign === "СПО"
+        ? { certificate_average: String(f.get("certificate_average")) }
+        : {}),
       study_form: f.get("study_form"),
       quota,
       priority: 1,
       consent: f.get("consent") === "on",
       achievements: Number(f.get("achievements")),
-      exam_scores: {
-        "Русский язык": Number(f.get("russian")),
-        Математика: Number(f.get("math")),
-        "Предмет по выбору": Number(f.get("elective")),
-      },
+      exam_scores:
+        campaign === "СПО"
+          ? {}
+          : {
+              "Русский язык": Number(f.get("russian")),
+              Математика: Number(f.get("math")),
+              "Предмет по выбору": Number(f.get("elective")),
+            },
     };
     try {
       await api("/registry", jsonBody({ applicant, application }));
@@ -596,7 +719,12 @@ function NewApplicant({
           </label>
           <label className="field">
             Кампания
-            <select name="campaign">
+            <select
+              name="campaign"
+              value={campaign}
+              onChange={(event) => setCampaign(event.target.value)}
+            >
+              <option value="СПО">Среднее профессиональное образование</option>
               <option value="бак">Бакалавриат</option>
               <option value="маг">Магистратура</option>
               <option value="асп">Аспирантура</option>
@@ -624,26 +752,40 @@ function NewApplicant({
             </select>
           </label>
         </div>
-        <div className="form-grid form-grid-four">
-          {[
-            ["russian", "Русский язык"],
-            ["math", "Математика"],
-            ["elective", "По выбору"],
-            ["achievements", "Баллы ИД"],
-          ].map(([name, label]) => (
-            <label className="field" key={name}>
-              {label}
-              <input
-                name={name}
-                type="number"
-                min={0}
-                max={100}
-                defaultValue={0}
-                required
-              />
-            </label>
-          ))}
-        </div>
+        {campaign === "СПО" ? (
+          <label className="field">
+            Средний балл аттестата
+            <input
+              name="certificate_average"
+              type="number"
+              min="2"
+              max="5"
+              step="0.01"
+              required
+            />
+          </label>
+        ) : (
+          <div className="form-grid form-grid-four">
+            {[
+              ["russian", "Русский язык"],
+              ["math", "Математика"],
+              ["elective", "По выбору"],
+              ["achievements", "Баллы ИД"],
+            ].map(([name, label]) => (
+              <label className="field" key={name}>
+                {label}
+                <input
+                  name={name}
+                  type="number"
+                  min={0}
+                  max={100}
+                  defaultValue={0}
+                  required
+                />
+              </label>
+            ))}
+          </div>
+        )}
         <label className="checkbox-field">
           <input name="consent" type="checkbox" />
           <Check size={15} />

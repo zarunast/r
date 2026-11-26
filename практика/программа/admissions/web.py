@@ -1,13 +1,13 @@
 """Служебные представления для внутреннего сайта. Все данные доступны только после входа."""
 from datetime import datetime, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from fastapi import Depends, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, select
 
+from .college import score_expression
 from .models import ActivityEvent, Applicant, Application, Contract, SeatPlan
 from . import services as svc
 
@@ -53,7 +53,7 @@ def attach_web(app, db, session, staff):
 
     @app.get("/dashboard", dependencies=private)
     def dashboard(year: int = Query(ge=2000, le=2100), s=Depends(session)):
-        today = datetime.now(ZoneInfo("Europe/Moscow")).date()
+        today = svc.moscow_today()
         stats = svc.statistics(s, year)
         received_date = func.substr(Application.source["Дата получения документов"].as_string(), 1, 10)
         today_count = s.scalar(select(func.count()).select_from(Application).where(
@@ -88,7 +88,7 @@ def attach_web(app, db, session, staff):
                 matching = matching.where(getattr(Application, field) == value)
         app_set = matching.subquery()
         summary = select(app_set.c.applicant_number.label("number"), func.count().label("applications_count"),
-                         func.max(app_set.c.total_score).label("best_score")).group_by(app_set.c.applicant_number).subquery()
+                         func.max(score_expression(app_set.c)).label("best_score")).group_by(app_set.c.applicant_number).subquery()
         stmt = select(Applicant, summary.c.applications_count, summary.c.best_score).join(summary, Applicant.number == summary.c.number)
         if q:
             full_name = Applicant.surname + " " + Applicant.first_name + " " + Applicant.patronymic
