@@ -53,10 +53,10 @@ export async function registerStaff(fields: FormData) {
   const { password_confirmation: confirmation, ...account } =
     Object.fromEntries(fields);
   if (account.password !== confirmation) throw new Error("Пароли не совпадают");
-  const response = await fetch(
-    API_BASE + "/auth/register",
-    jsonBody(account),
-  ).catch(() => {
+  const response = await fetch(API_BASE + "/auth/register", {
+    ...jsonBody(account),
+    headers: { "Content-Type": "application/json" },
+  }).catch(() => {
     throw new Error("Сервер недоступен. Проверьте запуск Python API.");
   });
   if (!response.ok) throw new Error(await responseError(response));
